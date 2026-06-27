@@ -1,0 +1,16 @@
+[project]
+name = "browser"
+version = "0.1.0"
+description = "Web Browser Engineering Browser"
+readme = "README.md"
+requires-python = ">=3.9, <3.14"
+dependencies = [
+  "dukpy>=0.5.0",
+  "pysdl2>=0.9.17",
+  "pysdl2-dll>=2.32.0",
+  "skia-python==87.7",
+  "gtts>=2.5.4",
+  "playsound==1.2.2",
+  "pyobjc-framework-cocoa>=11.1; sys_platform == 'darwin'",
+  "pyopengl>=3.1.10",
+]
