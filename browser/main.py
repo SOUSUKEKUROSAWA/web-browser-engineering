@@ -3,6 +3,7 @@ import socket
 import ssl
 
 WIDTH, HEIGHT = 800, 600
+HSTEP, VSTEP = 13, 18
 
 class URL:
     def __init__(self, url: str):
@@ -80,11 +81,18 @@ class Browser:
 
     def load(self, url: URL):
         body = url.request()
-        self.canvas.create_rectangle(10, 20, 400, 300) # 左上が（0,0），右下が（x,y）となる座標系．
-        self.canvas.create_oval(100, 100, 150, 150)
-        self.canvas.create_text(200, 150, text="Hi!")
+        text = lex(body)
+        cursor_x, cursor_y = HSTEP, VSTEP
+        for c in text:
+            self.canvas.create_text(cursor_x, cursor_y, text=c) # 左上が（0,0）右下が（x,y）となる座標系．
+            cursor_x += HSTEP
+            if cursor_x >= WIDTH - HSTEP:
+                # 折り返し
+                cursor_y += VSTEP
+                cursor_x = HSTEP
 
-def show(body):
+def lex(body):
+    text = ""
     in_tag = False
     for c in body:
         if c == "<":
@@ -92,7 +100,8 @@ def show(body):
         elif c == ">":
             in_tag = False
         elif not in_tag:
-            print(c, end="")
+            text += c
+    return text
 
 if __name__ == "__main__":
     import sys
