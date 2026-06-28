@@ -2,8 +2,9 @@ import tkinter
 import socket
 import ssl
 
-WIDTH, HEIGHT = 800, 600
-HSTEP, VSTEP = 13, 18
+WIDTH, HEIGHT = 800, 600 # キャンバス全体の幅と高さ．
+HSTEP, VSTEP = 13, 18 # 画面上の1文字の幅と高さ．
+SCROLL_STEP = 100 # 1回の画面スクロールで座標が移動する距離．
 
 class URL:
     def __init__(self, url: str):
@@ -78,18 +79,26 @@ class Browser:
             height=HEIGHT
         )
         self.canvas.pack()
+        self.scroll = 0
+        self.window.bind("<Down>", self.scrolldown) # 下矢印キーがクリックされたら，scrolldown メソッドが呼ばれる．
+
+    def draw(self):
+        """
+        テキストの画面座標（ref. layout()）を決定し，画面（キャンバス）に描画する．
+        """
+        self.canvas.delete("all") # 再描画時のためにまずキャンバスをクリア．
+        for x, y, c in self.display_list:
+            self.canvas.create_text(x, y - self.scroll, text=c) # 左上が（0,0）右下が（x,y）となる座標系．
 
     def load(self, url: URL):
         body = url.request()
         text = lex(body)
-        cursor_x, cursor_y = HSTEP, VSTEP
-        for c in text:
-            self.canvas.create_text(cursor_x, cursor_y, text=c) # 左上が（0,0）右下が（x,y）となる座標系．
-            cursor_x += HSTEP
-            if cursor_x >= WIDTH - HSTEP:
-                # 折り返し
-                cursor_y += VSTEP
-                cursor_x = HSTEP
+        self.display_list = layout(text)
+        self.draw()
+
+    def scrolldown(self, e):
+        self.scroll += SCROLL_STEP
+        self.draw() # 再描画
 
 def lex(body):
     text = ""
@@ -102,6 +111,26 @@ def lex(body):
         elif not in_tag:
             text += c
     return text
+
+def layout(text):
+    """
+    テキストのページ座標を決定する．
+
+    ページ座標：Webページ全体における位置座標
+    画面座標：画面（フレーム）内における位置座標
+
+    e.g. ページ座標(y) 123 ピクセルの位置のテキストが 30 ピクセル下にスクロールされた場合の画面座標(y)は 93 ピクセル．
+    """
+    display_list = [] # 各文字のページ座標のリスト．
+    cursor_x, cursor_y = HSTEP, VSTEP
+    for c in text:
+        display_list.append((cursor_x, cursor_y, c))
+        cursor_x += HSTEP
+        if cursor_x >= WIDTH - HSTEP:
+            # 折り返し
+            cursor_y += VSTEP
+            cursor_x = HSTEP
+    return display_list
 
 if __name__ == "__main__":
     import sys
