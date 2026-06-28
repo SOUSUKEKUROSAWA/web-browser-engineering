@@ -1,16 +1,27 @@
 import socket
+import ssl
 
 class URL:
     def __init__(self, url):
         # URL のパース．
         self.scheme, url = url.split("://", 1)
-        assert self.scheme == "http"
+        assert self.scheme in ["http", "https"]
+
+        if self.scheme == "http":
+            self.port = 80
+        elif self.scheme == "https":
+            self.port = 443
 
         if "/" not in url:
             url = url + "/"
 
         self.host, url = url.split("/", 1)
         self.path = "/" + url
+
+        if ":" in self.host:
+            # http://example.org:8080/ のようなカスタムポートに対応．
+            self.host, port = self.host.split(":", 1)
+            self.port = int(port)
 
     def request(self):
         # ソケットの作成．
@@ -19,7 +30,10 @@ class URL:
             type=socket.SOCK_STREAM, # ソケットタイプ（＝ 行われる会話の種類）．STREAM（＝ 任意の量のデータを送信できる）．
             proto=socket.IPPROTO_TCP, # プロトコル（＝ 2台のコンピュータが接続を確立する方法）．
         )
-        s.connect((self.host, 80))
+        s.connect((self.host, self.port))
+        if self.scheme == "https":
+            ctx = ssl.create_default_context()
+            s = ctx.wrap_socket(s, server_hostname=self.host)
 
         # リクエストの送信．
         request = "GET {} HTTP/1.0\r\n".format(self.path)
