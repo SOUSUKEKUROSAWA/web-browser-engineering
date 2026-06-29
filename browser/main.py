@@ -88,6 +88,9 @@ class Browser:
         """
         self.canvas.delete("all") # 再描画時のためにまずキャンバスをクリア．
         for x, y, c in self.display_list:
+            if y > self.scroll + HEIGHT: continue # 画面下部より下の文字
+            if y + VSTEP < self.scroll: continue # 画面上部より上の文字
+
             self.canvas.create_text(x, y - self.scroll, text=c) # 左上が（0,0）右下が（x,y）となる座標系．
 
     def load(self, url: URL):
