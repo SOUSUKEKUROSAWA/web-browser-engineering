@@ -132,7 +132,7 @@ def layout(text: str):
         w = font.measure(word) # 英語は単語ごとにサイズが異なるので，都度幅を計算する．
         display_list.append((cursor_x, cursor_y, word))
         cursor_x += w + font.measure(" ")
-        if cursor_x + w >= WIDTH - HSTEP:
+        if cursor_x + w > WIDTH - HSTEP:
             # 折り返し
             cursor_y += font.metrics("linespace") * 1.25 # linespace: 1行の標準的な高さを取得
             cursor_x = HSTEP
