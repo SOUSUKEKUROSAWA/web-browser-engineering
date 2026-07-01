@@ -88,11 +88,17 @@ class Browser:
         テキストの画面座標（ref. layout()）を決定し，画面（キャンバス）に描画する．
         """
         self.canvas.delete("all") # 再描画時のためにまずキャンバスをクリア．
-        for x, y, c in self.display_list:
+        for x, y, word, font in self.display_list:
             if y > self.scroll + HEIGHT: continue # 画面下部より下の文字
             if y + VSTEP < self.scroll: continue # 画面上部より上の文字
 
-            self.canvas.create_text(x, y - self.scroll, text=c) # 左上が（0,0）右下が（x,y）となる座標系．
+            self.canvas.create_text(
+                x,
+                y - self.scroll, # 左上が（0,0）右下が（x,y）となる座標系．
+                text=word,
+                font=font,
+                anchor="nw"
+            )
 
     def load(self, url: URL):
         body = url.request()
@@ -104,19 +110,37 @@ class Browser:
         self.scroll += SCROLL_STEP
         self.draw() # 再描画
 
+class Text:
+    def __init__(self, text):
+        self.text: str = text
+
+class Tag:
+    def __init__(self, tag):
+        self.tag = tag
+
 def lex(body):
-    text = ""
+    """
+    HTML 本文をトークンリストに変換する．
+    """
+    out = []
+    buffer = "" # テキストまたはタグの内容を一時的に保持
     in_tag = False
     for c in body:
         if c == "<":
             in_tag = True
+            if buffer: out.append(Text(buffer))
+            buffer = ""
         elif c == ">":
             in_tag = False
+            out.append(Tag(buffer))
+            buffer = ""
         elif not in_tag:
-            text += c
-    return text
+            buffer += c
+    if not in_tag and buffer:
+        out.append(Text(buffer))
+    return out
 
-def layout(text: str):
+def layout(tokens):
     """
     テキストのページ座標を決定する．
 
@@ -126,16 +150,33 @@ def layout(text: str):
     e.g. ページ座標(y) 123 ピクセルの位置のテキストが 30 ピクセル下にスクロールされた場合の画面座標(y)は 93 ピクセル．
     """
     font = tkinter.font.Font() # デフォルトフォントを使用
+    weight = "normal"
+    style = "roman"
     display_list = [] # 各文字のページ座標のリスト．
     cursor_x, cursor_y = HSTEP, VSTEP
-    for word in text.split():
-        w = font.measure(word) # 英語は単語ごとにサイズが異なるので，都度幅を計算する．
-        display_list.append((cursor_x, cursor_y, word))
-        cursor_x += w + font.measure(" ")
-        if cursor_x + w > WIDTH - HSTEP:
-            # 折り返し
-            cursor_y += font.metrics("linespace") * 1.25 # linespace: 1行の標準的な高さを取得
-            cursor_x = HSTEP
+    for tok in tokens:
+        if isinstance(tok, Text):
+            for word in tok.text.split():
+                font = tkinter.font.Font(
+                    size=16,
+                    weight=weight,
+                    slant=style
+                )
+                w = font.measure(word) # 英語は単語ごとにサイズが異なるので，都度幅を計算する．
+                display_list.append((cursor_x, cursor_y, word, font))
+                cursor_x += w + font.measure(" ")
+                if cursor_x + w > WIDTH - HSTEP:
+                    # 折り返し
+                    cursor_y += font.metrics("linespace") * 1.25 # linespace: 1行の標準的な高さを取得
+                    cursor_x = HSTEP
+        elif isinstance(tok, Tag) and tok.tag == "i":
+            style = "italic"
+        elif isinstance(tok, Tag) and tok.tag == "/i":
+            style = "roman"
+        elif isinstance(tok, Tag) and tok.tag == "b":
+            weight = "bold"
+        elif isinstance(tok, Tag) and tok.tag == "/b":
+            weight = "normal"
     return display_list
 
 if __name__ == "__main__":
