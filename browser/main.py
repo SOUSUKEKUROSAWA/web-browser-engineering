@@ -130,28 +130,6 @@ class Tag:
     def __init__(self, tag):
         self.tag = tag
 
-def lex(body):
-    """
-    HTML 本文をトークンリストに変換する．
-    """
-    out = []
-    buffer = "" # テキストまたはタグの内容を一時的に保持
-    in_tag = False
-    for c in body:
-        if c == "<":
-            in_tag = True
-            if buffer: out.append(Text(buffer))
-            buffer = ""
-        elif c == ">":
-            in_tag = False
-            out.append(Tag(buffer))
-            buffer = ""
-        else:
-            buffer += c
-    if not in_tag and buffer:
-        out.append(Text(buffer))
-    return out
-
 class Layout:
     def __init__(self, tokens):
         self.display_list = []
@@ -203,6 +181,28 @@ class Layout:
             # 折り返し
             self.cursor_y += font.metrics("linespace") * 1.25 # linespace: 1行の標準的な高さを取得
             self.cursor_x = HSTEP
+
+def lex(body):
+    """
+    HTML 本文をトークンリストに変換する．
+    """
+    out = []
+    buffer = "" # テキストまたはタグの内容を一時的に保持
+    in_tag = False
+    for c in body:
+        if c == "<":
+            in_tag = True
+            if buffer: out.append(Text(buffer))
+            buffer = ""
+        elif c == ">":
+            in_tag = False
+            out.append(Tag(buffer))
+            buffer = ""
+        else:
+            buffer += c
+    if not in_tag and buffer:
+        out.append(Text(buffer))
+    return out
 
 if __name__ == "__main__":
     import sys
