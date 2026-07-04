@@ -134,7 +134,7 @@ def lex(body):
             in_tag = False
             out.append(Tag(buffer))
             buffer = ""
-        elif not in_tag:
+        else:
             buffer += c
     if not in_tag and buffer:
         out.append(Text(buffer))
