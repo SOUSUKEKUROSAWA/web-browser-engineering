@@ -3,9 +3,16 @@ import tkinter.font
 import socket
 import ssl
 
-WIDTH, HEIGHT = 800, 600 # キャンバス全体の幅と高さ．
-HSTEP, VSTEP = 13, 18 # 画面上の1文字の幅と高さ．
-SCROLL_STEP = 100 # 1回の画面スクロールで座標が移動する距離．
+WIDTH = 800
+"""キャンバス全体の幅"""
+HEIGHT = 600
+"""キャンバス全体の高さ"""
+HSTEP = 13
+"""画面上の1文字の幅"""
+VSTEP = 18
+"""画面上の1文字の高さ"""
+SCROLL_STEP = 100
+"""1回の画面スクロールで座標が移動する距離"""
 
 class URL:
     def __init__(self, url: str):
@@ -85,7 +92,12 @@ class Browser:
 
     def draw(self):
         """
-        テキストの画面座標（ref. layout()）を決定し，画面（キャンバス）に描画する．
+        テキストの画面座標を決定し，画面（キャンバス）に描画する．
+
+        ページ座標：Webページ全体における位置座標
+        画面座標：画面（フレーム）内における位置座標
+
+        e.g. ページ座標(y) 123 ピクセルの位置のテキストが 30 ピクセル下にスクロールされた場合の画面座標(y)は 93 ピクセル．
         """
         self.canvas.delete("all") # 再描画時のためにまずキャンバスをクリア．
         for x, y, word, font in self.display_list:
@@ -103,7 +115,7 @@ class Browser:
     def load(self, url: URL):
         body = url.request()
         text = lex(body)
-        self.display_list = layout(text)
+        self.display_list = Layout(text).display_list
         self.draw()
 
     def scrolldown(self, e):
@@ -140,44 +152,57 @@ def lex(body):
         out.append(Text(buffer))
     return out
 
-def layout(tokens):
-    """
-    テキストのページ座標を決定する．
+class Layout:
+    def __init__(self, tokens):
+        self.display_list = []
+        """ページ座標やフォント情報を保持するリスト"""
+        self.cursor_x = HSTEP
+        self.cursor_y = VSTEP
+        self.weight = "normal"
+        self.style = "roman"
+        self.size = 12
 
-    ページ座標：Webページ全体における位置座標
-    画面座標：画面（フレーム）内における位置座標
+        for tok in tokens:
+            self.token(tok)
 
-    e.g. ページ座標(y) 123 ピクセルの位置のテキストが 30 ピクセル下にスクロールされた場合の画面座標(y)は 93 ピクセル．
-    """
-    font = tkinter.font.Font() # デフォルトフォントを使用
-    weight = "normal"
-    style = "roman"
-    display_list = [] # 各文字のページ座標のリスト．
-    cursor_x, cursor_y = HSTEP, VSTEP
-    for tok in tokens:
+    def token(self, tok):
         if isinstance(tok, Text):
             for word in tok.text.split():
-                font = tkinter.font.Font(
-                    size=16,
-                    weight=weight,
-                    slant=style
-                )
-                w = font.measure(word) # 英語は単語ごとにサイズが異なるので，都度幅を計算する．
-                display_list.append((cursor_x, cursor_y, word, font))
-                cursor_x += w + font.measure(" ")
-                if cursor_x + w > WIDTH - HSTEP:
-                    # 折り返し
-                    cursor_y += font.metrics("linespace") * 1.25 # linespace: 1行の標準的な高さを取得
-                    cursor_x = HSTEP
-        elif isinstance(tok, Tag) and tok.tag == "i":
-            style = "italic"
-        elif isinstance(tok, Tag) and tok.tag == "/i":
-            style = "roman"
-        elif isinstance(tok, Tag) and tok.tag == "b":
-            weight = "bold"
-        elif isinstance(tok, Tag) and tok.tag == "/b":
-            weight = "normal"
-    return display_list
+                self.word(word)
+        elif isinstance(tok, Tag):
+            if tok.tag == "i":
+                self.style = "italic"
+            elif tok.tag == "/i":
+                self.style = "roman"
+            elif tok.tag == "b":
+                self.weight = "bold"
+            elif tok.tag == "/b":
+                self.weight = "normal"
+            elif tok.tag == "small":
+                self.size -= 2
+            elif tok.tag == "/small":
+                self.size += 2
+            elif tok.tag == "big":
+                self.size += 4
+            elif tok.tag == "/big":
+                self.size -= 4
+
+    def word(self, word):
+        """
+        個々の単語のディスプレイリストを作成する．
+        """
+        font = tkinter.font.Font(
+            size=self.size,
+            weight=self.weight,
+            slant=self.style
+        )
+        w = font.measure(word) # 英語は単語ごとにサイズが異なるので，都度幅を計算する．
+        self.display_list.append((self.cursor_x, self.cursor_y, word, font))
+        self.cursor_x += w + font.measure(" ")
+        if self.cursor_x + w > WIDTH - HSTEP:
+            # 折り返し
+            self.cursor_y += font.metrics("linespace") * 1.25 # linespace: 1行の標準的な高さを取得
+            self.cursor_x = HSTEP
 
 if __name__ == "__main__":
     import sys
