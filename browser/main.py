@@ -109,7 +109,7 @@ class Browser:
                 y - self.scroll, # 左上が（0,0）右下が（x,y）となる座標系．
                 text=word,
                 font=font,
-                anchor="nw"
+                anchor="nw" # north west の略．左上の角を（0,0）として描画する．
             )
 
     def load(self, url: URL):
@@ -139,9 +139,36 @@ class Layout:
         self.weight = "normal"
         self.style = "roman"
         self.size = 12
+        self.line: list[tuple[int, str, tkinter.font.Font]] = []
+        """行バッファ"""
 
         for tok in tokens:
             self.token(tok)
+
+        # 最終行のフォーマット
+        self.flush()
+
+    def flush(self):
+        """
+        改行の前処理
+
+        その行のベースラインの計算と，改行後のカーソル位置の計算．
+        """
+        if not self.line: return # 空の行はスキップ
+
+        # ベースラインに沿って単語を整列させる（テキストのサイズが異なるとバラバラになってしまうため）
+        max_ascent = max([font.metrics("ascent") for x, word, font in self.line]) # 行内のテキストの最大アセント（高さ）
+        baseline = self.cursor_y + 1.25 * max_ascent
+        for x, word, font in self.line:
+            y = baseline - font.metrics("ascent") # ベースラインからアセント（高さ）の分だけ上が，このテキストの左上になる．
+            self.display_list.append((x, y, word, font))
+
+        # 次の行の x, y 座標をセット
+        metrics = [font.metrics() for x, word, font in self.line]
+        max_descent = max([metric["descent"] for metric in metrics]) # 行内のテキストの最大ディセント（g や y などの文字の下側のはみ出し部分の深さ）
+        self.cursor_y = baseline + 1.25 * max_descent
+        self.cursor_x = HSTEP
+        self.line = [] # バッファをクリア
 
     def token(self, tok):
         if isinstance(tok, Text):
@@ -164,6 +191,11 @@ class Layout:
                 self.size += 4
             elif tok.tag == "/big":
                 self.size -= 4
+            elif tok.tag == "br":
+                self.flush()
+            elif tok.tag == "/p":
+                self.flush()
+                self.cursor_y += VSTEP # 段落間のスペースを追加
 
     def word(self, word):
         """
@@ -175,12 +207,16 @@ class Layout:
             slant=self.style
         )
         w = font.measure(word) # 英語は単語ごとにサイズが異なるので，都度幅を計算する．
-        self.display_list.append((self.cursor_x, self.cursor_y, word, font))
-        self.cursor_x += w + font.measure(" ")
+
         if self.cursor_x + w > WIDTH - HSTEP:
             # 折り返し
-            self.cursor_y += font.metrics("linespace") * 1.25 # linespace: 1行の標準的な高さを取得
-            self.cursor_x = HSTEP
+            self.flush()
+
+        # その行のディスプレイリストをバッファに追加
+        self.line.append((self.cursor_x, word, font))
+
+        # x カーソルを次の単語まで移動
+        self.cursor_x += w + font.measure(" ")
 
 def lex(body):
     """
