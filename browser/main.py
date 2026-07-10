@@ -13,6 +13,8 @@ VSTEP = 18
 """画面上の1文字の高さ"""
 SCROLL_STEP = 100
 """1回の画面スクロールで座標が移動する距離"""
+FONTS = {}
+"""フォントキャッシュ"""
 
 class URL:
     def __init__(self, url: str):
@@ -201,11 +203,7 @@ class Layout:
         """
         個々の単語のディスプレイリストを作成する．
         """
-        font = tkinter.font.Font(
-            size=self.size,
-            weight=self.weight,
-            slant=self.style
-        )
+        font = get_font(self.size, self.weight, self.style)
         w = font.measure(word) # 英語は単語ごとにサイズが異なるので，都度幅を計算する．
 
         if self.cursor_x + w > WIDTH - HSTEP:
@@ -239,6 +237,22 @@ def lex(body):
     if not in_tag and buffer:
         out.append(Text(buffer))
     return out
+
+def get_font(size, weight, style) -> tkinter.font.Font:
+    """
+    フォントキャッシュからフォントを取得，または作成する．
+    """
+    key = (size, weight, style)
+    if key not in FONTS:
+        font = tkinter.font.Font(
+            size=size,
+            weight=weight,
+            slant=style
+        )
+        label = tkinter.Label(font=font)
+        FONTS[key] = (font, label) # metrics のパフォーマンス向上のために label を付与（tkinter の推奨）
+
+    return FONTS[key][0]
 
 if __name__ == "__main__":
     import sys
