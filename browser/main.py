@@ -125,12 +125,16 @@ class Browser:
         self.draw() # 再描画
 
 class Text:
-    def __init__(self, text):
+    def __init__(self, text, parent):
         self.text: str = text
+        self.children = [] # note: テキストノードに子は存在しないが，Element との一貫性のために定義している．
+        self.parent = parent
 
-class Tag:
-    def __init__(self, tag):
+class Element:
+    def __init__(self, tag, parent):
         self.tag = tag
+        self.children = []
+        self.parent = parent
 
 class Layout:
     def __init__(self, tokens):
@@ -216,27 +220,33 @@ class Layout:
         # x カーソルを次の単語まで移動
         self.cursor_x += w + font.measure(" ")
 
-def lex(body):
-    """
-    HTML 本文をトークンリストに変換する．
-    """
-    out = []
-    buffer = "" # テキストまたはタグの内容を一時的に保持
-    in_tag = False
-    for c in body:
-        if c == "<":
-            in_tag = True
-            if buffer: out.append(Text(buffer))
-            buffer = ""
-        elif c == ">":
-            in_tag = False
-            out.append(Tag(buffer))
-            buffer = ""
-        else:
-            buffer += c
-    if not in_tag and buffer:
-        out.append(Text(buffer))
-    return out
+class HTMLParser:
+    def __init__(self, body):
+        self.body = body
+        """分析している HTML 本文"""
+        self.unfinished = []
+        """未完成の HTML ツリー"""
+
+    def parse(self):
+        """
+        HTML 本文を HTML ツリー（DOM）に変換する．
+        """
+        text = "" # テキストを一時的に保持しておくバッファ．
+        in_tag = False
+        for c in self.body:
+            if c == "<":
+                in_tag = True
+                if text: self.add_text(text)
+                text = ""
+            elif c == ">":
+                in_tag = False
+                self.add_tag(text)
+                text = ""
+            else:
+                text += c
+        if not in_tag and text:
+            self.add_text(text)
+        return self.finish()
 
 def get_font(size, weight, style) -> tkinter.font.Font:
     """
