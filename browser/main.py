@@ -224,7 +224,7 @@ class HTMLParser:
     def __init__(self, body):
         self.body = body
         """分析している HTML 本文"""
-        self.unfinished = []
+        self.unfinished: list[Text|Element] = []
         """未完成の HTML ツリー"""
 
     def parse(self):
@@ -247,6 +247,41 @@ class HTMLParser:
         if not in_tag and text:
             self.add_text(text)
         return self.finish()
+
+    def add_text(self, text):
+        """
+        テキストトークンをノードに変換する．
+
+        note: テキストトークンに子ノードは存在しえないので，その場で完成させる．
+        """
+        parent = self.unfinished[-1]
+        node = Text(text, parent)
+        parent.children.append(node)
+
+    def add_tag(self, tag: str):
+        if tag.startswith("/"): # 終了タグ
+            # ドキュメントの最後の終了タグは，追加する未完成ノードがないのでスキップ．
+            if len(self.unfinished) == 1: return
+            # そのノードを完成させる（＝ 自分より内側にいるノードを子ノードとして登録する）
+            node = self.unfinished.pop()
+            parent = self.unfinished[-1]
+            parent.children.append(node)
+        else: # 開始タグ
+            parent = self.unfinished[-1] if self.unfinished else None # ドキュメントの最初の開始タグは，親がいないので None．
+            node = Element(tag, parent)
+            self.unfinished.append(node)
+
+    def finish(self) -> Element:
+        """
+        残った未完成ノードを完成させる．
+
+        return: ツリーの頂点となる単一の要素
+        """
+        while len(self.unfinished) > 1:
+            node = self.unfinished.pop()
+            parent = self.unfinished[-1]
+            parent.children.append(node)
+        return self.unfinished.pop()
 
 def get_font(size, weight, style) -> tkinter.font.Font:
     """
