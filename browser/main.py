@@ -180,7 +180,7 @@ class Layout:
         if isinstance(tok, Text):
             for word in tok.text.split():
                 self.word(word)
-        elif isinstance(tok, Tag):
+        elif isinstance(tok, Element):
             if tok.tag == "i":
                 self.style = "italic"
             elif tok.tag == "/i":
