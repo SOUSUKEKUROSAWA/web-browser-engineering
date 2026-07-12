@@ -1,3 +1,4 @@
+from typing import Union
 import tkinter
 import tkinter.font
 import socket
@@ -130,11 +131,17 @@ class Text:
         self.children = [] # note: テキストノードに子は存在しないが，Element との一貫性のために定義している．
         self.parent = parent
 
+    def __repr__(self):
+        return repr(self.text)
+
 class Element:
     def __init__(self, tag, parent):
         self.tag = tag
-        self.children = []
+        self.children: list[Union[Text, Element]] = []
         self.parent = parent
+
+    def __repr__(self):
+        return "<" + self.tag + ">"
 
 class Layout:
     def __init__(self, tokens):
@@ -224,7 +231,7 @@ class HTMLParser:
     def __init__(self, body):
         self.body = body
         """分析している HTML 本文"""
-        self.unfinished: list[Text|Element] = []
+        self.unfinished: list[Union[Text, Element]] = []
         """未完成の HTML ツリー"""
 
     def parse(self):
@@ -248,17 +255,22 @@ class HTMLParser:
             self.add_text(text)
         return self.finish()
 
-    def add_text(self, text):
+    def add_text(self, text: str):
         """
         テキストトークンをノードに変換する．
 
         note: テキストトークンに子ノードは存在しえないので，その場で完成させる．
         """
+        if text.isspace(): return
+
         parent = self.unfinished[-1]
         node = Text(text, parent)
         parent.children.append(node)
 
     def add_tag(self, tag: str):
+        # <!DOCTYPE html> や <!-- comment --> は無視する．
+        if tag.startswith("!"): return
+
         if tag.startswith("/"): # 終了タグ
             # ドキュメントの最後の終了タグは，追加する未完成ノードがないのでスキップ．
             if len(self.unfinished) == 1: return
@@ -299,7 +311,15 @@ def get_font(size, weight, style) -> tkinter.font.Font:
 
     return FONTS[key][0]
 
+def print_tree(node: Union[Text, Element], indent=0):
+    print(" " * indent, node)
+    for child in node.children:
+        print_tree(child, indent + 2)
+
 if __name__ == "__main__":
     import sys
-    Browser().load(URL(sys.argv[1]))
-    tkinter.mainloop()
+    # Browser().load(URL(sys.argv[1]))
+    # tkinter.mainloop()
+    body = URL(sys.argv[1]).request()
+    nodes = HTMLParser(body).parse()
+    print_tree(nodes)
