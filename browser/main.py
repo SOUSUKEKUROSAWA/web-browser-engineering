@@ -135,8 +135,9 @@ class Text:
         return repr(self.text)
 
 class Element:
-    def __init__(self, tag, parent):
+    def __init__(self, tag, attributes, parent):
         self.tag = tag
+        self.attributes = attributes
         self.children: list[Union[Text, Element]] = []
         self.parent = parent
 
@@ -228,6 +229,8 @@ class Layout:
         self.cursor_x += w + font.measure(" ")
 
 class HTMLParser:
+    SELF_CLOSING_TAGS = ["area","base","br","col","embed","hr","img","input","link","meta","param","source","track","wbr",]
+
     def __init__(self, body):
         self.body = body
         """分析している HTML 本文"""
@@ -268,6 +271,8 @@ class HTMLParser:
         parent.children.append(node)
 
     def add_tag(self, tag: str):
+        tag, attributes = self.get_attributes(tag)
+
         # <!DOCTYPE html> や <!-- comment --> は無視する．
         if tag.startswith("!"): return
 
@@ -278,9 +283,13 @@ class HTMLParser:
             node = self.unfinished.pop()
             parent = self.unfinished[-1]
             parent.children.append(node)
+        elif tag in self.SELF_CLOSING_TAGS: # 自己終了タグ
+            parent = self.unfinished[-1]
+            node = Element(tag, attributes, parent)
+            parent.children.append(node)
         else: # 開始タグ
             parent = self.unfinished[-1] if self.unfinished else None # ドキュメントの最初の開始タグは，親がいないので None．
-            node = Element(tag, parent)
+            node = Element(tag, attributes, parent)
             self.unfinished.append(node)
 
     def finish(self) -> Element:
@@ -294,6 +303,23 @@ class HTMLParser:
             parent = self.unfinished[-1]
             parent.children.append(node)
         return self.unfinished.pop()
+
+    def get_attributes(self, text: str):
+        """
+        タグを，タグ名と属性に分割する．
+        """
+        parts = text.split()
+        tag = parts[0].casefold()
+        attributes = {}
+        for attrpair in parts[1:]:
+            if "=" in attrpair: # e.g. <a href=https://example.com>
+                key, value = attrpair.split("=", 1)
+                if len(value) > 2 and value[0] in ["'", "\""]: # e.g. <a href="https://example.com>"
+                    value = value[1:-1]
+                attributes[key.casefold()] = value
+            else: # e.g. <input disabled>
+                attributes[attrpair.casefold()] = ""
+        return tag, attributes
 
 def get_font(size, weight, style) -> tkinter.font.Font:
     """
