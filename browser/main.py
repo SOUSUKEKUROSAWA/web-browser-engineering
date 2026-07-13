@@ -117,8 +117,8 @@ class Browser:
 
     def load(self, url: URL):
         body = url.request()
-        text = lex(body)
-        self.display_list = Layout(text).display_list
+        self.nodes = HTMLParser(body).parse()
+        self.display_list = Layout(self.nodes).display_list
         self.draw()
 
     def scrolldown(self, e):
@@ -145,7 +145,7 @@ class Element:
         return "<" + self.tag + ">"
 
 class Layout:
-    def __init__(self, tokens):
+    def __init__(self, tree: Element):
         self.display_list = []
         """ページ座標やフォント情報を保持するリスト"""
         self.cursor_x = HSTEP
@@ -156,8 +156,7 @@ class Layout:
         self.line: list[tuple[int, str, tkinter.font.Font]] = []
         """行バッファ"""
 
-        for tok in tokens:
-            self.token(tok)
+        self.recurse(tree)
 
         # 最終行のフォーマット
         self.flush()
@@ -183,6 +182,44 @@ class Layout:
         self.cursor_y = baseline + 1.25 * max_descent
         self.cursor_x = HSTEP
         self.line = [] # バッファをクリア
+
+    def recurse(self, tree: Union[Text, Element]):
+        """
+        ツリーを再帰的にパースする．
+        """
+        if isinstance(tree, Text):
+            for word in tree.text.split():
+                self.word(word)
+        else:
+            self.open_tag(tree.tag)
+            for child in tree.children:
+                self.recurse(child)
+            self.close_tag(tree.tag)
+
+    def open_tag(self, tag):
+        if tag == "i":
+            self.style = "italic"
+        elif tag == "b":
+            self.weight = "bold"
+        elif tag == "small":
+            self.size -= 2
+        elif tag == "big":
+            self.size += 4
+        elif tag == "br":
+            self.flush()
+
+    def close_tag(self, tag):
+        if tag == "/i":
+            self.style = "roman"
+        elif tag == "/b":
+            self.weight = "normal"
+        elif tag == "/small":
+            self.size += 2
+        elif tag == "/big":
+            self.size -= 4
+        elif tag == "/p":
+            self.flush()
+            self.cursor_y += VSTEP # 段落間のスペースを追加
 
     def token(self, tok):
         if isinstance(tok, Text):
@@ -237,9 +274,11 @@ class HTMLParser:
         self.unfinished: list[Union[Text, Element]] = []
         """未完成の HTML ツリー"""
 
-    def parse(self):
+    def parse(self) -> Element:
         """
         HTML 本文を HTML ツリー（DOM）に変換する．
+
+        return: ツリーの頂点となる単一の要素
         """
         text = "" # テキストを一時的に保持しておくバッファ．
         in_tag = False
@@ -344,8 +383,5 @@ def print_tree(node: Union[Text, Element], indent=0):
 
 if __name__ == "__main__":
     import sys
-    # Browser().load(URL(sys.argv[1]))
-    # tkinter.mainloop()
-    body = URL(sys.argv[1]).request()
-    nodes = HTMLParser(body).parse()
-    print_tree(nodes)
+    Browser().load(URL(sys.argv[1]))
+    tkinter.mainloop()
