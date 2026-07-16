@@ -267,6 +267,8 @@ class Layout:
 
 class HTMLParser:
     SELF_CLOSING_TAGS = ["area","base","br","col","embed","hr","img","input","link","meta","param","source","track","wbr",]
+    HEAD_TAGS = ["base", "basefont", "bgsound", "noscript", "link", "meta", "title", "style", "script"]
+    """<head> 要素に入れるべきタグのリスト"""
 
     def __init__(self, body):
         self.body = body
@@ -305,6 +307,9 @@ class HTMLParser:
         """
         if text.isspace(): return
 
+        # タグが書かれず、いきなりテキストから始まる場合を考慮
+        self.implicit_tags(None)
+
         parent = self.unfinished[-1]
         node = Text(text, parent)
         parent.children.append(node)
@@ -314,6 +319,8 @@ class HTMLParser:
 
         # <!DOCTYPE html> や <!-- comment --> は無視する．
         if tag.startswith("!"): return
+
+        self.implicit_tags(tag)
 
         if tag.startswith("/"): # 終了タグ
             # ドキュメントの最後の終了タグは，追加する未完成ノードがないのでスキップ．
@@ -333,10 +340,14 @@ class HTMLParser:
 
     def finish(self) -> Element:
         """
-        残った未完成ノードを完成させる．
+        残った未完成ノードを完成させる（＝ タグを閉じる）．
 
         return: ツリーの頂点となる単一の要素
         """
+        if not self.unfinished:
+            # 中身が完全に空（または空白文字だけ）の場合を考慮
+            self.implicit_tags(None)
+
         while len(self.unfinished) > 1:
             node = self.unfinished.pop()
             parent = self.unfinished[-1]
@@ -359,6 +370,29 @@ class HTMLParser:
             else: # e.g. <input disabled>
                 attributes[attrpair.casefold()] = ""
         return tag, attributes
+
+    def implicit_tags(self, tag):
+        """
+        暗黙的なタグ挿入
+
+        param:
+            tag: 現在パースしているタグ名．テキストノードの場合は None．
+        """
+        while True:
+            open_tags = [node.tag for node in self.unfinished]
+            if open_tags == [] and tag != "html":
+                # ドキュメントの最初のタグが <html> 以外の場合
+                self.add_tag("html")
+            elif open_tags == ["html"] and tag not in ["head", "body", "/html"]:
+                if tag in self.HEAD_TAGS:
+                    self.add_tag("head")
+                else:
+                    self.add_tag("body")
+            elif open_tags == ["html", "head"] and tag not in ["/head"] + self.HEAD_TAGS:
+                # パーサーが <head> ないにあり，<body> に入れるべき要素を見た場合
+                self.add_tag("/head")
+            else:
+                break
 
 def get_font(size, weight, style) -> tkinter.font.Font:
     """
