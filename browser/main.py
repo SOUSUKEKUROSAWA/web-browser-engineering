@@ -249,8 +249,14 @@ HSTEP = 13
 VSTEP = 18
 """画面上の1文字の高さ"""
 
-class Layout:
-    def __init__(self, tree: Element):
+class BlockLayout:
+    def __init__(self, node: Element, parent, previous):
+        self.node = node
+        self.parent = parent
+        self.previous = previous
+        self.children = []
+
+    def layout(self):
         self.display_list = []
         """ページ座標やフォント情報を保持するリスト"""
         self.cursor_x = HSTEP
@@ -261,7 +267,7 @@ class Layout:
         self.line: list[tuple[int, str, tkinter.font.Font]] = []
         """行バッファ"""
 
-        self.recurse(tree)
+        self.recurse(self.node)
 
         # 最終行のフォーマット
         self.flush()
@@ -343,6 +349,19 @@ class Layout:
         # x カーソルを次の単語まで移動
         self.cursor_x += w + font.measure(" ")
 
+class DocumentLayout:
+    def __init__(self, node):
+        self.node = node
+        self.parent = None
+        self.children = []
+
+    def layout(self):
+        child = BlockLayout(self.node, self, None)
+        self.children.append(child)
+        child.layout()
+        self.display_list = child.display_list
+        """ページ座標やフォント情報を保持するリスト"""
+
 SCROLL_STEP = 100
 """1回の画面スクロールで座標が移動する距離"""
 
@@ -368,7 +387,7 @@ class Browser:
         e.g. ページ座標(y) 123 ピクセルの位置のテキストが 30 ピクセル下にスクロールされた場合の画面座標(y)は 93 ピクセル．
         """
         self.canvas.delete("all") # 再描画時のためにまずキャンバスをクリア．
-        for x, y, word, font in self.display_list:
+        for x, y, word, font in self.document.display_list:
             if y > self.scroll + HEIGHT: continue # 画面下部より下の文字
             if y + VSTEP < self.scroll: continue # 画面上部より上の文字
 
@@ -383,7 +402,8 @@ class Browser:
     def load(self, url: URL):
         body = url.request()
         self.nodes = HTMLParser(body).parse()
-        self.display_list = Layout(self.nodes).display_list
+        self.document = DocumentLayout(self.nodes)
+        self.document.layout()
         self.draw()
 
     def scrolldown(self, e):
