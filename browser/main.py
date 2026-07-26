@@ -249,28 +249,71 @@ HSTEP = 13
 VSTEP = 18
 """画面上の1文字の高さ"""
 
+BLOCK_ELEMENTS = ["html", "body", "article", "section", "nav", "aside", "h1", "h2", "h3", "h4", "h5", "h6", "hgroup", "header", "footer", "address", "p", "hr", "pre", "blockquote", "ol", "ul", "menu", "li", "dl", "dt", "dd", "figure", "figcaption", "main", "div", "table", "form", "fieldset", "legend", "details", "summary"]
+
 class BlockLayout:
     def __init__(self, node: Element, parent, previous):
         self.node = node
+        """
+        HTMLツリー
+        """
+        # e.g.
+        # HTML ツリー                 レイアウトツリー
+        #                             Document
+        # html                    ->  |-- Block
+        # |-- body                ->      |-- Block
+        #     |-- h1              ->          |-- Block
+        #     |   |- Text                     |
+        #     |-- p               ->          |-- Block
+        #         |-- Text
+        #         |-- a
+        #         |   |-- Text
+        #         |-- Text
         self.parent = parent
         self.previous = previous
-        self.children = []
-
-    def layout(self):
+        self.children: list[BlockLayout] = []
         self.display_list = []
         """ページ座標やフォント情報を保持するリスト"""
-        self.cursor_x = HSTEP
-        self.cursor_y = VSTEP
-        self.weight = "normal"
-        self.style = "roman"
-        self.size = 12
-        self.line: list[tuple[int, str, tkinter.font.Font]] = []
-        """行バッファ"""
 
-        self.recurse(self.node)
+    def layout(self):
+        """
+        HTMLツリーからレイアウトツリーを構築する．
+        """
+        mode = self.layout_mode()
+        if mode == "block":
+            previous = None
+            for child in self.node.children:
+                # HTML ツリーの子をレイアウトツリーの子に変換して登録する．
+                next = BlockLayout(child, self, previous)
+                self.children.append(next)
+                previous = next
+        else:
+            self.cursor_x = 0
+            self.cursor_y = 0
+            self.weight = "normal"
+            self.style = "roman"
+            self.size = 12
+            self.line: list[tuple[int, str, tkinter.font.Font]] = []
+            """行バッファ"""
 
-        # 最終行のフォーマット
-        self.flush()
+            self.recurse(self.node)
+
+            # 最終行のフォーマット
+            self.flush()
+
+        for child in self.children:
+            child.layout()
+
+    def layout_mode(self):
+        if isinstance(self.node, Text):
+            return "inline"
+        elif any([isinstance(child, Element) and child.tag in BLOCK_ELEMENTS for child in self.node.children]):
+            # エッジケース: <div><p>paragraph</p>text<b>bold</b></div> など
+            return "block"
+        elif self.node.children:
+            return "inline"
+        else:
+            return "block"
 
     def flush(self):
         """
@@ -296,7 +339,7 @@ class BlockLayout:
 
     def recurse(self, tree: Union[Text, Element]):
         """
-        ツリーを再帰的にパースする．
+        インライン要素を再帰的にレイアウトする（ディスプレイリストを構築する）．
         """
         if isinstance(tree, Text):
             for word in tree.text.split():
@@ -350,12 +393,20 @@ class BlockLayout:
         self.cursor_x += w + font.measure(" ")
 
 class DocumentLayout:
+    """
+    レイアウトツリーのルート
+    """
+
     def __init__(self, node):
         self.node = node
+        """HTML ツリー"""
         self.parent = None
         self.children = []
 
     def layout(self):
+        """
+        HTMLツリーからレイアウトツリーを構築する．
+        """
         child = BlockLayout(self.node, self, None)
         self.children.append(child)
         child.layout()
