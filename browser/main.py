@@ -323,6 +323,11 @@ class BlockLayout:
 
         if mode == "block":
             self.height = sum([child.height for child in self.children])
+            # note: ブラウザが真っ白に表示されてしまう問題はこれで一旦解決する．
+            # ---
+            # for child in self.children:
+            #     self.display_list.extend(child.display_list)
+            # ---
         else:
             self.height = self.cursor_y
 
@@ -386,15 +391,15 @@ class BlockLayout:
             self.flush()
 
     def close_tag(self, tag):
-        if tag == "/i":
+        if tag == "i":
             self.style = "roman"
-        elif tag == "/b":
+        elif tag == "b":
             self.weight = "normal"
-        elif tag == "/small":
+        elif tag == "small":
             self.size += 2
-        elif tag == "/big":
+        elif tag == "big":
             self.size -= 4
-        elif tag == "/p":
+        elif tag == "p":
             self.flush()
             self.cursor_y += VSTEP # 段落間のスペースを追加
 
@@ -482,6 +487,7 @@ class Browser:
         self.nodes = HTMLParser(body).parse()
         self.document = DocumentLayout(self.nodes)
         self.document.layout()
+        print_tree(self.document) # todo: 最終的に削除
         self.draw()
 
     def scrolldown(self, e):
