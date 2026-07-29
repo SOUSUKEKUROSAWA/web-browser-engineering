@@ -269,16 +269,33 @@ class BlockLayout:
         #         |-- a
         #         |   |-- Text
         #         |-- Text
-        self.parent = parent
-        self.previous = previous
+        self.parent: BlockLayout = parent
+        self.previous: BlockLayout = previous
+        """１つ前の（兄弟の）レイアウトオブジェクト"""
         self.children: list[BlockLayout] = []
         self.display_list = []
         """ページ座標やフォント情報を保持するリスト"""
+        self.x = None
+        self.y = None
+        self.width = None
+        self.height = None
+        self.cursor_x = 0
+        """self.x に対する相対位置"""
+        self.cursor_y = 0
+        """self.y に対する相対位置"""
 
     def layout(self):
         """
         HTMLツリーからレイアウトツリーを構築する．
         """
+        self.x = self.parent.x
+        self.width = self.parent.width
+
+        if self.previous:
+            self.y = self.previous.y + self.previous.height
+        else:
+            self.y = self.parent.y
+
         mode = self.layout_mode()
         if mode == "block":
             previous = None
@@ -304,6 +321,11 @@ class BlockLayout:
         for child in self.children:
             child.layout()
 
+        if mode == "block":
+            self.height = sum([child.height for child in self.children])
+        else:
+            self.height = self.cursor_y
+
     def layout_mode(self):
         if isinstance(self.node, Text):
             return "inline"
@@ -326,15 +348,16 @@ class BlockLayout:
         # ベースラインに沿って単語を整列させる（テキストのサイズが異なるとバラバラになってしまうため）
         max_ascent = max([font.metrics("ascent") for x, word, font in self.line]) # 行内のテキストの最大アセント（高さ）
         baseline = self.cursor_y + 1.25 * max_ascent
-        for x, word, font in self.line:
-            y = baseline - font.metrics("ascent") # ベースラインからアセント（高さ）の分だけ上が，このテキストの左上になる．
+        for rel_x, word, font in self.line:
+            x = self.x + rel_x
+            y = self.y + baseline - font.metrics("ascent") # ベースラインからアセント（高さ）の分だけ上が，このテキストの左上になる．
             self.display_list.append((x, y, word, font))
 
         # 次の行の x, y 座標をセット
         metrics = [font.metrics() for x, word, font in self.line]
         max_descent = max([metric["descent"] for metric in metrics]) # 行内のテキストの最大ディセント（g や y などの文字の下側のはみ出し部分の深さ）
         self.cursor_y = baseline + 1.25 * max_descent
-        self.cursor_x = HSTEP
+        self.cursor_x = 0
         self.line = [] # バッファをクリア
 
     def recurse(self, tree: Union[Text, Element]):
@@ -382,7 +405,7 @@ class BlockLayout:
         font = get_font(self.size, self.weight, self.style)
         w = font.measure(word) # 英語は単語ごとにサイズが異なるので，都度幅を計算する．
 
-        if self.cursor_x + w > WIDTH - HSTEP:
+        if self.cursor_x + w > self.width:
             # 折り返し
             self.flush()
 
@@ -409,9 +432,13 @@ class DocumentLayout:
         """
         child = BlockLayout(self.node, self, None)
         self.children.append(child)
-        child.layout()
         self.display_list = child.display_list
         """ページ座標やフォント情報を保持するリスト"""
+        self.width = WIDTH - 2*HSTEP # 2*HSTEP は左右のパディング
+        self.x = HSTEP
+        self.y = VSTEP # 上下のパディング
+        child.layout()
+        self.height = child.height
 
 SCROLL_STEP = 100
 """1回の画面スクロールで座標が移動する距離"""
