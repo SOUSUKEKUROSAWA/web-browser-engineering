@@ -288,9 +288,11 @@ class BlockLayout:
         """
         HTMLツリーからレイアウトツリーを構築する．
         """
+        # スタイルを考慮しなければ，x, width は親と共通
         self.x = self.parent.x
         self.width = self.parent.width
 
+        # 垂直位置 y は前の兄弟要素の有無で位置が決まる．
         if self.previous:
             self.y = self.previous.y + self.previous.height
         else:
@@ -318,16 +320,19 @@ class BlockLayout:
             # 最終行のフォーマット
             self.flush()
 
+        # note: width と height の計算順
+        #   width: 親ブロックの幅が「あらかじめ」計算されている必要がある．＝ layout() の再帰呼び出しの「前」に計算する必要がある．
+        #   height: 子ブロックの高さが「あらかじめ」計算されている必要がある．＝ layout() の再帰呼び出しの「後」に計算する必要がある．
         for child in self.children:
             child.layout()
 
         if mode == "block":
+            # 全ての子を含むのに十分な高さが必要．
             self.height = sum([child.height for child in self.children])
+
             # note: ブラウザが真っ白に表示されてしまう問題はこれで一旦解決する．
-            # ---
             # for child in self.children:
             #     self.display_list.extend(child.display_list)
-            # ---
         else:
             self.height = self.cursor_y
 
@@ -442,6 +447,7 @@ class DocumentLayout:
         self.width = WIDTH - 2*HSTEP # 2*HSTEP は左右のパディング
         self.x = HSTEP
         self.y = VSTEP # 上下のパディング
+        # 「note: width と height の計算順」と同じ理由で，height の計算は child.layout() の後に行う必要がある．
         child.layout()
         self.height = child.height
 
