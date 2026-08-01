@@ -329,10 +329,6 @@ class BlockLayout:
         if mode == "block":
             # 全ての子を含むのに十分な高さが必要．
             self.height = sum([child.height for child in self.children])
-
-            # note: ブラウザが真っ白に表示されてしまう問題はこれで一旦解決する．
-            # for child in self.children:
-            #     self.display_list.extend(child.display_list)
         else:
             self.height = self.cursor_y
 
@@ -425,6 +421,9 @@ class BlockLayout:
         # x カーソルを次の単語まで移動
         self.cursor_x += w + font.measure(" ")
 
+    def paint(self):
+        return self.display_list
+
 class DocumentLayout:
     """
     レイアウトツリーのルート
@@ -442,14 +441,23 @@ class DocumentLayout:
         """
         child = BlockLayout(self.node, self, None)
         self.children.append(child)
-        self.display_list = child.display_list
-        """ページ座標やフォント情報を保持するリスト"""
         self.width = WIDTH - 2*HSTEP # 2*HSTEP は左右のパディング
         self.x = HSTEP
         self.y = VSTEP # 上下のパディング
         # 「note: width と height の計算順」と同じ理由で，height の計算は child.layout() の後に行う必要がある．
         child.layout()
         self.height = child.height
+
+    def paint(self):
+        return []
+
+def paint_tree(layout_object: Union[BlockLayout, DocumentLayout], display_list: list):
+    """
+    レイアウトツリー全体のディスプレイリストを構築する．
+    """
+    display_list.extend(layout_object.paint())
+    for child in layout_object.children:
+        paint_tree(child, display_list)
 
 SCROLL_STEP = 100
 """1回の画面スクロールで座標が移動する距離"""
@@ -476,7 +484,7 @@ class Browser:
         e.g. ページ座標(y) 123 ピクセルの位置のテキストが 30 ピクセル下にスクロールされた場合の画面座標(y)は 93 ピクセル．
         """
         self.canvas.delete("all") # 再描画時のためにまずキャンバスをクリア．
-        for x, y, word, font in self.document.display_list:
+        for x, y, word, font in self.display_list:
             if y > self.scroll + HEIGHT: continue # 画面下部より下の文字
             if y + VSTEP < self.scroll: continue # 画面上部より上の文字
 
@@ -493,7 +501,9 @@ class Browser:
         self.nodes = HTMLParser(body).parse()
         self.document = DocumentLayout(self.nodes)
         self.document.layout()
-        print_tree(self.document) # todo: 最終的に削除
+        self.display_list = []
+        """ページ座標やフォント情報を保持するリスト"""
+        paint_tree(self.document, self.display_list)
         self.draw()
 
     def scrolldown(self, e):
