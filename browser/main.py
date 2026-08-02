@@ -422,7 +422,20 @@ class BlockLayout:
         self.cursor_x += w + font.measure(" ")
 
     def paint(self):
-        return self.display_list
+        cmds = []
+
+        # コード例に使用される pre タグの背景をグレーにする．
+        # warning: テキストは背景の上に描画される必要があるので，DrawText より DrawRect が前に来る必要がある．
+        if isinstance(self.node, Element) and self.node.tag == "pre":
+            x2, y2 = self.x + self.width, self.y + self.height
+            rect = DrawRect(self.x, self.y, x2, y2, "gray")
+            cmds.append(rect)
+
+        if self.layout_mode() == "inline":
+            for x, y, word, font in self.display_list:
+                cmds.append(DrawText(x, y, word, font))
+
+        return cmds
 
 class DocumentLayout:
     """
@@ -472,11 +485,12 @@ class Browser:
         )
         self.canvas.pack()
         self.scroll = 0
+        """画面座標(y)の一番上がページ座標(y)のどこに位置するのかを表すオフセット値"""
         self.window.bind("<Down>", self.scrolldown) # 下矢印キーがクリックされたら，scrolldown メソッドが呼ばれる．
 
     def draw(self):
         """
-        テキストの画面座標を決定し，画面（キャンバス）に描画する．
+        描画対象（テキストや背景など）の画面座標を決定し，画面（キャンバス）に描画する．
 
         ページ座標：Webページ全体における位置座標
         画面座標：画面（フレーム）内における位置座標
@@ -484,31 +498,84 @@ class Browser:
         e.g. ページ座標(y) 123 ピクセルの位置のテキストが 30 ピクセル下にスクロールされた場合の画面座標(y)は 93 ピクセル．
         """
         self.canvas.delete("all") # 再描画時のためにまずキャンバスをクリア．
-        for x, y, word, font in self.display_list:
-            if y > self.scroll + HEIGHT: continue # 画面下部より下の文字
-            if y + VSTEP < self.scroll: continue # 画面上部より上の文字
+        for cmd in self.display_list:
+            if cmd.top > self.scroll + HEIGHT: continue # 画面下部より下の文字
+            if cmd.bottom < self.scroll: continue # 画面上部より上の文字
 
-            self.canvas.create_text(
-                x,
-                y - self.scroll, # 左上が（0,0）右下が（x,y）となる座標系．
-                text=word,
-                font=font,
-                anchor="nw" # north west の略．左上の角を（0,0）として描画する．
-            )
+            cmd.execute(self.scroll, self.canvas)
 
     def load(self, url: URL):
         body = url.request()
         self.nodes = HTMLParser(body).parse()
         self.document = DocumentLayout(self.nodes)
         self.document.layout()
-        self.display_list = []
+        self.display_list: list[Union[DrawText, DrawRect]] = []
         """ページ座標やフォント情報を保持するリスト"""
         paint_tree(self.document, self.display_list)
         self.draw()
 
     def scrolldown(self, e):
-        self.scroll += SCROLL_STEP
+        """
+        note:
+            最下部を過ぎてスクロールはできない．
+        """
+        # 最下部までスクロールした状態とは，
+        # 「画面の下端」=「ドキュメント全体の最下部」
+        # => self.scroll + HEIGHT == self.document.height + 2*VSTEP
+        # => self.scroll == self.document.height + 2*VSTEP - HEIGHT
+        max_y = max(self.document.height + 2*VSTEP - HEIGHT, 0)
+        self.scroll = min(self.scroll + SCROLL_STEP, max_y) # self.scroll + SCROLL_STEP => 次のスクロール位置
         self.draw() # 再描画
+
+class DrawText:
+    """
+    テキストを描画するためのコマンド
+    """
+
+    def __init__(self, x1, y1, text, font: tkinter.font.Font):
+        self.top = y1
+        self.left = x1
+        self.text = text
+        self.font = font
+        self.bottom = y1 + font.metrics("linespace")
+
+    def execute(self, scroll, canvas: tkinter.Canvas):
+        """
+        parameter:
+            scroll: スクロール量
+        """
+        canvas.create_text(
+            self.left,
+            self.top - scroll,
+            text=self.text,
+            font=self.font,
+            anchor='nw'
+        )
+
+class DrawRect:
+    """
+    背景を描画するためのコマンド
+    """
+    def __init__(self, x1, y1, x2, y2, color):
+        self.top = y1
+        self.left = x1
+        self.bottom = y2
+        self.right = x2
+        self.color = color
+
+    def execute(self, scroll, canvas: tkinter.Canvas):
+        """
+        parameter:
+            scroll: スクロール量
+        """
+        canvas.create_rectangle(
+            self.left,
+            self.top - scroll,
+            self.right,
+            self.bottom - scroll,
+            width=0, # 境界線不要なので 0
+            fill=self.color
+        )
 
 if __name__ == "__main__":
     import sys
