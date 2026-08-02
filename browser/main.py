@@ -296,6 +296,9 @@ class BlockLayout:
         #         |-- a
         #         |   |-- Text
         #         |-- Text
+        #
+        # 例えば，HTMLツリーとして解析は必要だが，
+        # 描画はしない head タグなどはレイアウトツリーには含まれないなど，使い分けが可能
         self.parent: BlockLayout = parent
         self.previous: BlockLayout = previous
         """１つ前の（兄弟の）レイアウトオブジェクト"""
