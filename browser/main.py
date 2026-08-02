@@ -126,6 +126,23 @@ class HTMLParser:
             self.add_text(text)
         return self.finish()
 
+    def get_attributes(self, text: str):
+        """
+        タグを，タグ名と属性に分割する．
+        """
+        parts = text.split()
+        tag = parts[0].casefold()
+        attributes = {}
+        for attrpair in parts[1:]:
+            if "=" in attrpair: # e.g. <a href=https://example.com>
+                key, value = attrpair.split("=", 1)
+                if len(value) > 2 and value[0] in ["'", "\""]: # e.g. <a href="https://example.com>"
+                    value = value[1:-1]
+                attributes[key.casefold()] = value
+            else: # e.g. <input disabled>
+                attributes[attrpair.casefold()] = ""
+        return tag, attributes
+
     def add_text(self, text: str):
         """
         テキストトークンをノードに変換する．
@@ -165,39 +182,6 @@ class HTMLParser:
             node = Element(tag, attributes, parent)
             self.unfinished.append(node)
 
-    def finish(self) -> Element:
-        """
-        残った未完成ノードを完成させる（＝ タグを閉じる）．
-
-        return: ツリーの頂点となる単一の要素
-        """
-        if not self.unfinished:
-            # 中身が完全に空（または空白文字だけ）の場合を考慮
-            self.implicit_tags(None)
-
-        while len(self.unfinished) > 1:
-            node = self.unfinished.pop()
-            parent = self.unfinished[-1]
-            parent.children.append(node)
-        return self.unfinished.pop()
-
-    def get_attributes(self, text: str):
-        """
-        タグを，タグ名と属性に分割する．
-        """
-        parts = text.split()
-        tag = parts[0].casefold()
-        attributes = {}
-        for attrpair in parts[1:]:
-            if "=" in attrpair: # e.g. <a href=https://example.com>
-                key, value = attrpair.split("=", 1)
-                if len(value) > 2 and value[0] in ["'", "\""]: # e.g. <a href="https://example.com>"
-                    value = value[1:-1]
-                attributes[key.casefold()] = value
-            else: # e.g. <input disabled>
-                attributes[attrpair.casefold()] = ""
-        return tag, attributes
-
     def implicit_tags(self, tag):
         """
         暗黙的なタグ挿入
@@ -220,6 +204,22 @@ class HTMLParser:
                 self.add_tag("/head")
             else:
                 break
+
+    def finish(self) -> Element:
+        """
+        残った未完成ノードを完成させる（＝ タグを閉じる）．
+
+        return: ツリーの頂点となる単一の要素
+        """
+        if not self.unfinished:
+            # 中身が完全に空（または空白文字だけ）の場合を考慮
+            self.implicit_tags(None)
+
+        while len(self.unfinished) > 1:
+            node = self.unfinished.pop()
+            parent = self.unfinished[-1]
+            parent.children.append(node)
+        return self.unfinished.pop()
 
 FONTS = {}
 """フォントキャッシュ"""
@@ -250,6 +250,33 @@ VSTEP = 18
 """画面上の1文字の高さ"""
 
 BLOCK_ELEMENTS = ["html", "body", "article", "section", "nav", "aside", "h1", "h2", "h3", "h4", "h5", "h6", "hgroup", "header", "footer", "address", "p", "hr", "pre", "blockquote", "ol", "ul", "menu", "li", "dl", "dt", "dd", "figure", "figcaption", "main", "div", "table", "form", "fieldset", "legend", "details", "summary"]
+
+class DocumentLayout:
+    """
+    レイアウトツリーのルート
+    """
+
+    def __init__(self, node):
+        self.node = node
+        """HTML ツリー"""
+        self.parent = None
+        self.children = []
+
+    def layout(self):
+        """
+        HTMLツリーからレイアウトツリーを構築する．
+        """
+        child = BlockLayout(self.node, self, None)
+        self.children.append(child)
+        self.width = WIDTH - 2*HSTEP # 2*HSTEP は左右のパディング
+        self.x = HSTEP
+        self.y = VSTEP # 上下のパディング
+        # 「note: width と height の計算順」と同じ理由で，height の計算は child.layout() の後に行う必要がある．
+        child.layout()
+        self.height = child.height
+
+    def paint(self):
+        return []
 
 class BlockLayout:
     def __init__(self, node: Element, parent, previous):
@@ -283,6 +310,17 @@ class BlockLayout:
         """self.x に対する相対位置"""
         self.cursor_y = 0
         """self.y に対する相対位置"""
+
+    def layout_mode(self):
+        if isinstance(self.node, Text):
+            return "inline"
+        elif any([isinstance(child, Element) and child.tag in BLOCK_ELEMENTS for child in self.node.children]):
+            # エッジケース: <div><p>paragraph</p>text<b>bold</b></div> など
+            return "block"
+        elif self.node.children:
+            return "inline"
+        else:
+            return "block"
 
     def layout(self):
         """
@@ -332,40 +370,6 @@ class BlockLayout:
         else:
             self.height = self.cursor_y
 
-    def layout_mode(self):
-        if isinstance(self.node, Text):
-            return "inline"
-        elif any([isinstance(child, Element) and child.tag in BLOCK_ELEMENTS for child in self.node.children]):
-            # エッジケース: <div><p>paragraph</p>text<b>bold</b></div> など
-            return "block"
-        elif self.node.children:
-            return "inline"
-        else:
-            return "block"
-
-    def flush(self):
-        """
-        改行の前処理
-
-        その行のベースラインの計算と，改行後のカーソル位置の計算．
-        """
-        if not self.line: return # 空の行はスキップ
-
-        # ベースラインに沿って単語を整列させる（テキストのサイズが異なるとバラバラになってしまうため）
-        max_ascent = max([font.metrics("ascent") for x, word, font in self.line]) # 行内のテキストの最大アセント（高さ）
-        baseline = self.cursor_y + 1.25 * max_ascent
-        for rel_x, word, font in self.line:
-            x = self.x + rel_x
-            y = self.y + baseline - font.metrics("ascent") # ベースラインからアセント（高さ）の分だけ上が，このテキストの左上になる．
-            self.display_list.append((x, y, word, font))
-
-        # 次の行の x, y 座標をセット
-        metrics = [font.metrics() for x, word, font in self.line]
-        max_descent = max([metric["descent"] for metric in metrics]) # 行内のテキストの最大ディセント（g や y などの文字の下側のはみ出し部分の深さ）
-        self.cursor_y = baseline + 1.25 * max_descent
-        self.cursor_x = 0
-        self.line = [] # バッファをクリア
-
     def recurse(self, tree: Union[Text, Element]):
         """
         インライン要素を再帰的にレイアウトする（ディスプレイリストを構築する）．
@@ -404,6 +408,29 @@ class BlockLayout:
             self.flush()
             self.cursor_y += VSTEP # 段落間のスペースを追加
 
+    def flush(self):
+        """
+        改行の前処理
+
+        その行のベースラインの計算と，改行後のカーソル位置の計算．
+        """
+        if not self.line: return # 空の行はスキップ
+
+        # ベースラインに沿って単語を整列させる（テキストのサイズが異なるとバラバラになってしまうため）
+        max_ascent = max([font.metrics("ascent") for x, word, font in self.line]) # 行内のテキストの最大アセント（高さ）
+        baseline = self.cursor_y + 1.25 * max_ascent
+        for rel_x, word, font in self.line:
+            x = self.x + rel_x
+            y = self.y + baseline - font.metrics("ascent") # ベースラインからアセント（高さ）の分だけ上が，このテキストの左上になる．
+            self.display_list.append((x, y, word, font))
+
+        # 次の行の x, y 座標をセット
+        metrics = [font.metrics() for x, word, font in self.line]
+        max_descent = max([metric["descent"] for metric in metrics]) # 行内のテキストの最大ディセント（g や y などの文字の下側のはみ出し部分の深さ）
+        self.cursor_y = baseline + 1.25 * max_descent
+        self.cursor_x = 0
+        self.line = [] # バッファをクリア
+
     def word(self, word):
         """
         個々の単語のディスプレイリストを作成する．
@@ -437,32 +464,55 @@ class BlockLayout:
 
         return cmds
 
-class DocumentLayout:
+class DrawText:
     """
-    レイアウトツリーのルート
+    テキストを描画するためのコマンド
     """
 
-    def __init__(self, node):
-        self.node = node
-        """HTML ツリー"""
-        self.parent = None
-        self.children = []
+    def __init__(self, x1, y1, text, font: tkinter.font.Font):
+        self.top = y1
+        self.left = x1
+        self.text = text
+        self.font = font
+        self.bottom = y1 + font.metrics("linespace")
 
-    def layout(self):
+    def execute(self, scroll, canvas: tkinter.Canvas):
         """
-        HTMLツリーからレイアウトツリーを構築する．
+        parameter:
+            scroll: スクロール量
         """
-        child = BlockLayout(self.node, self, None)
-        self.children.append(child)
-        self.width = WIDTH - 2*HSTEP # 2*HSTEP は左右のパディング
-        self.x = HSTEP
-        self.y = VSTEP # 上下のパディング
-        # 「note: width と height の計算順」と同じ理由で，height の計算は child.layout() の後に行う必要がある．
-        child.layout()
-        self.height = child.height
+        canvas.create_text(
+            self.left,
+            self.top - scroll,
+            text=self.text,
+            font=self.font,
+            anchor='nw'
+        )
 
-    def paint(self):
-        return []
+class DrawRect:
+    """
+    背景を描画するためのコマンド
+    """
+    def __init__(self, x1, y1, x2, y2, color):
+        self.top = y1
+        self.left = x1
+        self.bottom = y2
+        self.right = x2
+        self.color = color
+
+    def execute(self, scroll, canvas: tkinter.Canvas):
+        """
+        parameter:
+            scroll: スクロール量
+        """
+        canvas.create_rectangle(
+            self.left,
+            self.top - scroll,
+            self.right,
+            self.bottom - scroll,
+            width=0, # 境界線不要なので 0
+            fill=self.color
+        )
 
 def paint_tree(layout_object: Union[BlockLayout, DocumentLayout], display_list: list):
     """
@@ -526,56 +576,6 @@ class Browser:
         max_y = max(self.document.height + 2*VSTEP - HEIGHT, 0)
         self.scroll = min(self.scroll + SCROLL_STEP, max_y) # self.scroll + SCROLL_STEP => 次のスクロール位置
         self.draw() # 再描画
-
-class DrawText:
-    """
-    テキストを描画するためのコマンド
-    """
-
-    def __init__(self, x1, y1, text, font: tkinter.font.Font):
-        self.top = y1
-        self.left = x1
-        self.text = text
-        self.font = font
-        self.bottom = y1 + font.metrics("linespace")
-
-    def execute(self, scroll, canvas: tkinter.Canvas):
-        """
-        parameter:
-            scroll: スクロール量
-        """
-        canvas.create_text(
-            self.left,
-            self.top - scroll,
-            text=self.text,
-            font=self.font,
-            anchor='nw'
-        )
-
-class DrawRect:
-    """
-    背景を描画するためのコマンド
-    """
-    def __init__(self, x1, y1, x2, y2, color):
-        self.top = y1
-        self.left = x1
-        self.bottom = y2
-        self.right = x2
-        self.color = color
-
-    def execute(self, scroll, canvas: tkinter.Canvas):
-        """
-        parameter:
-            scroll: スクロール量
-        """
-        canvas.create_rectangle(
-            self.left,
-            self.top - scroll,
-            self.right,
-            self.bottom - scroll,
-            width=0, # 境界線不要なので 0
-            fill=self.color
-        )
 
 if __name__ == "__main__":
     import sys
