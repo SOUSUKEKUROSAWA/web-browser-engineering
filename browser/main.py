@@ -580,6 +580,106 @@ class Browser:
         self.scroll = min(self.scroll + SCROLL_STEP, max_y) # self.scroll + SCROLL_STEP => 次のスクロール位置
         self.draw() # 再描画
 
+class CSSParser:
+    def __init__(self, s):
+        self.s: list[str] = s
+        """パース対象のテキスト"""
+        self.i = 0
+        """パーサの現在位置"""
+
+    def whitespace(self):
+        """
+        空白を読み飛ばす（パーサのインデックスだけ進める）．
+        """
+        while self.i < len(self.s) and self.s[self.i].isspace():
+            self.i += 1
+
+    def word(self) -> str:
+        """
+        プロパティをパースする．
+
+        return:
+            プロパティ名やその値
+        """
+        start = self.i
+
+        while self.i < len(self.s):
+            if self.s[self.i].isalnum() or self.s[self.i] in "#-.%":
+                # プロパティとして許容されている文字である場合
+                self.i += 1
+            else:
+                break
+
+        if not (self.i > start):
+            raise Exception("Parsing error")
+
+        return self.s[start:self.i]
+
+    def literal(self, literal):
+        """
+        リテラルを読み飛ばす（コロン「:」など）．
+        """
+        if not (self.i < len(self.s) and self.s[self.i] == literal):
+            raise Exception("Parsing error")
+        self.i += 1
+
+    def pair(self):
+        """
+        プロパティ名とその値のペアをパースする．
+
+        return:
+            プロパティ名
+            プロパティ値
+        """
+        prop = self.word()
+        self.whitespace()
+        self.literal(":")
+        self.whitespace()
+        val = self.word()
+
+        return prop.casefold(), val
+
+    def body(self):
+        """
+        style 属性全体をパースする．
+        """
+        pairs = {}
+
+        while self.i < len(self.s):
+            try:
+                prop, val = self.pair()
+                pairs[prop.casefold()] = val
+                self.whitespace()
+                self.literal(";")
+                self.whitespace()
+            except Exception:
+                why = self.ignore_until([";"])
+                if why == ";":
+                    self.literal(";")
+                    self.whitespace()
+                else:
+                    break
+
+        return pairs
+
+    def ignore_until(self, chars: list[str]):
+        """
+        chars で指定された文字までスキップする．
+
+        e.g. パースに失敗した場合，パースできないプロパティと値のペアはスキップして，
+             次のパース可能な文字列まで移動して，エラーから復帰するのに使用する．
+
+        return:
+            chars で指定された文字列のうち，最初に現れた文字
+        """
+        while self.i < len(self.s):
+            if self.s[self.i] in chars:
+                return self.s[self.i]
+            else:
+                self.i += 1
+
+        return None
+
 if __name__ == "__main__":
     import sys
     Browser().load(URL(sys.argv[1]))
