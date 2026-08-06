@@ -465,6 +465,15 @@ class BlockLayout:
             for x, y, word, font in self.display_list:
                 cmds.append(DrawText(x, y, word, font))
 
+        # node.style は style() 内で動的に追加されている属性なので，ここで検証．
+        assert hasattr(self.node, "style") and isinstance(self.node.style, dict)
+        bgcolor = self.node.style.get("background-color", "transparent")
+
+        if bgcolor != "transparent":
+            x2, y2 = self.x + self.width, self.y + self.height
+            rect = DrawRect(self.x, self.y, x2, y2, bgcolor)
+            cmds.append(rect)
+
         return cmds
 
 class DrawText:
@@ -560,6 +569,7 @@ class Browser:
     def load(self, url: URL):
         body = url.request()
         self.nodes = HTMLParser(body).parse()
+        style(self.nodes)
         self.document = DocumentLayout(self.nodes)
         self.document.layout()
         self.display_list: list[Union[DrawText, DrawRect]] = []
@@ -679,6 +689,19 @@ class CSSParser:
                 self.i += 1
 
         return None
+
+def style(node):
+    """
+    パースされた style 属性をノードの style フィールドに保存する．
+    """
+    node.style = {}
+    if isinstance(node, Element) and "style" in node.attributes:
+        pairs = CSSParser(node.attributes["style"]).body()
+        for property, value in pairs.items():
+            node.style[property] = value
+
+    for child in node.children:
+        style(child)
 
 if __name__ == "__main__":
     import sys
