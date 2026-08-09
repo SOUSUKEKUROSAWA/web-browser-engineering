@@ -72,7 +72,7 @@ class Text:
     def __init__(self, text, parent):
         self.text: str = text
         self.children = [] # note: テキストノードに子は存在しないが，Element との一貫性のために定義している．
-        self.parent = parent
+        self.parent: Element = parent
 
     def __repr__(self):
         return repr(self.text)
@@ -82,7 +82,7 @@ class Element:
         self.tag = tag
         self.attributes = attributes
         self.children: list[Union[Text, Element]] = []
-        self.parent = parent
+        self.parent: Union[Element, None] = parent
 
     def __repr__(self):
         return "<" + self.tag + ">"
@@ -652,10 +652,12 @@ class CSSParser:
     def body(self):
         """
         style 属性全体をパースする．
+
+        e.g. article div { font-size: 20px, color: red } の font-size: 20px, color: red の部分．
         """
         pairs = {}
 
-        while self.i < len(self.s):
+        while self.i < len(self.s) and self.s[self.i] != "}":
             try:
                 prop, val = self.pair()
                 pairs[prop.casefold()] = val
@@ -663,7 +665,7 @@ class CSSParser:
                 self.literal(";")
                 self.whitespace()
             except Exception:
-                why = self.ignore_until([";"])
+                why = self.ignore_until([";", "}"])
                 if why == ";":
                     self.literal(";")
                     self.whitespace()
@@ -690,6 +692,46 @@ class CSSParser:
 
         return None
 
+    def selector(self):
+        """
+        セレクタをパースする．
+
+        e.g. article div { ... } の article div の部分．
+        """
+        out = TagSelector(self.word().casefold())
+        self.whitespace()
+        while self.i < len(self.s) and self.s[self.i] != "{":
+            tag = self.word()
+            descendant = TagSelector(tag.casefold())
+            out = DescendantSelector(out, descendant)
+            self.whitespace()
+        return out
+
+    def parse(self):
+        """
+        .css ファイル内をパースして，セレクタとスタイル設定のルールのペアを返す．
+        """
+        rules = []
+
+        while self.i < len(self.s):
+            try:
+                self.whitespace()
+                selector = self.selector()
+                self.literal("{")
+                self.whitespace()
+                body = self.body()
+                self.literal("}")
+                rules.append((selector, body))
+            except Exception:
+                why = self.ignore_until(["}"])
+                if why == "}":
+                    self.literal("}")
+                    self.whitespace()
+                else:
+                    break
+
+        return rules
+
 def style(node):
     """
     パースされた style 属性をノードの style フィールドに保存する．
@@ -702,6 +744,53 @@ def style(node):
 
     for child in node.children:
         style(child)
+
+class TagSelector:
+    """
+    タグセレクタ
+
+    e.g. div { ... } // 全ての div 要素をセレクト
+    """
+    def __init__(self, tag):
+        self.tag = tag
+
+    def matches(self, node: Union[Text, Element]):
+        """
+        セレクタが要素に一致するかどうか
+        """
+        return isinstance(node, Element) and self.tag == node.tag
+
+class DescendantSelector:
+    """
+    子孫セレクタ
+
+    e.g. article div { ... } // article を祖先にもつ全ての div 要素をセレクト
+    """
+    def __init__(self, ancestor, descendant):
+        self.ancestor: Union[TagSelector, DescendantSelector] = ancestor
+        """
+        祖先のセレクタ
+
+        e.g. article div { ... } の article
+        """
+        self.descendant: Union[TagSelector, DescendantSelector] = descendant
+        """
+        子孫のセレクタ
+
+        e.g. article div { ... } の div
+        """
+
+    def matches(self, node: Union[Text, Element]):
+        """
+        セレクタが要素に一致するかどうか
+        """
+        if not self.descendant.matches(node): return False
+
+        while node.parent:
+            if self.ancestor.matches(node.parent): return True
+            node = node.parent
+
+        return False
 
 if __name__ == "__main__":
     import sys
