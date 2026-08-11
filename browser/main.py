@@ -68,6 +68,29 @@ class URL:
 
         return content
 
+    def resolve(self, url: str):
+        """
+        相対URLを完全なURLに変換する．
+        """
+        # 通常のURL
+        if "://" in url: return URL(url)
+
+        # パス相対URL：スラッシュで始まらず，ファイル名のように解決される．
+        if not url.startswith("/"):
+            dir, _ = self.path.rsplit("/", 1) # e.g. /blog/posts/article.html -> dir: /blog/posts, _: article.html
+            while url.startswith("../"):
+                _, url = url.split("/", 1) # 先頭の ../ を削る．e.g. ../../index.html -> _: ../, url: ../index.html
+                if "/" in dir:
+                    dir, _ = dir.rsplit("/", 1) # ディレクトリを1階層上に遡る．e.g. 元の dir が /blog/posts だった場合，dir が /blog に更新される．
+            url = dir + "/" + url
+
+        # スキーム相対URL：「//」で始まり，その後に完全なURLが続く．
+        if url.startswith("//"):
+            return URL(self.scheme + ":" + url)
+        # ホスト相対URL：スラッシュで始まるが，既存のスキームとホストを再利用する．
+        else:
+            return URL(self.scheme + "://" + self.host + ":" + str(self.port) + url)
+
 class Text:
     def __init__(self, text, parent):
         self.text: str = text
@@ -78,7 +101,7 @@ class Text:
         return repr(self.text)
 
 class Element:
-    def __init__(self, tag, attributes, parent):
+    def __init__(self, tag, attributes: dict, parent):
         self.tag = tag
         self.attributes = attributes
         self.children: list[Union[Text, Element]] = []
@@ -569,7 +592,27 @@ class Browser:
     def load(self, url: URL):
         body = url.request()
         self.nodes = HTMLParser(body).parse()
-        style(self.nodes)
+
+        rules = DEFAULT_STYLE_SHEET.copy()
+
+        links = [
+            node.attributes["href"] for node in tree_to_list(self.nodes, [])
+                if isinstance(node, Element)
+                    and node.tag == "link"
+                    and node.attributes.get("rel") == "stylesheet"
+                    and "href" in node.attributes
+        ]
+        for link in links:
+            style_url = url.resolve(link)
+            try:
+                body = style_url.request()
+            except:
+                # ダウンロードに失敗したスタイルシートは単に無視する．
+                continue
+            rules.extend(CSSParser(body).parse())
+
+        style(self.nodes, rules)
+
         self.document = DocumentLayout(self.nodes)
         self.document.layout()
         self.display_list: list[Union[DrawText, DrawRect]] = []
@@ -709,7 +752,7 @@ class CSSParser:
 
     def parse(self):
         """
-        .css ファイル内をパースして，セレクタとスタイル設定のルールのペアを返す．
+        .css 形式のテキストをパースして，セレクタとスタイル設定のルールのペアを返す．
         """
         rules = []
 
@@ -731,19 +774,6 @@ class CSSParser:
                     break
 
         return rules
-
-def style(node):
-    """
-    パースされた style 属性をノードの style フィールドに保存する．
-    """
-    node.style = {}
-    if isinstance(node, Element) and "style" in node.attributes:
-        pairs = CSSParser(node.attributes["style"]).body()
-        for property, value in pairs.items():
-            node.style[property] = value
-
-    for child in node.children:
-        style(child)
 
 class TagSelector:
     """
@@ -791,6 +821,39 @@ class DescendantSelector:
             node = node.parent
 
         return False
+
+DEFAULT_STYLE_SHEET = CSSParser(open("browser.css").read()).parse()
+
+def style(node, rules: list[tuple[Union[TagSelector, DescendantSelector], dict[str, str]]]):
+    """
+    パースされた style 属性をノードの style フィールドに保存する．
+    """
+    node.style = {}
+
+    # スタイルシートで定義されたスタイルを設定する．
+    for selector, body in rules:
+        if not selector.matches(node): continue
+
+        for property, value in body.items():
+            node.style[property] = value
+
+    # style 属性で定義されたスタイルはスタイルシートで定義されたスタイルを上書きする．
+    if isinstance(node, Element) and "style" in node.attributes:
+        pairs = CSSParser(node.attributes["style"]).body()
+        for property, value in pairs.items():
+            node.style[property] = value
+
+    for child in node.children:
+        style(child, rules)
+
+def tree_to_list(tree: Union[Element, DocumentLayout, BlockLayout], list: list):
+    """
+    ツリー（HTMLツリー or レイアウトツリー）をノードのリストに変換する．
+    """
+    list.append(tree)
+    for child in tree.children:
+        tree_to_list(child, list)
+    return list
 
 if __name__ == "__main__":
     import sys
