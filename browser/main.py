@@ -611,7 +611,10 @@ class Browser:
                 continue
             rules.extend(CSSParser(body).parse())
 
-        style(self.nodes, rules)
+        style(
+            self.nodes,
+            sorted(rules, key=cascade_priority)
+        )
 
         self.document = DocumentLayout(self.nodes)
         self.document.layout()
@@ -783,6 +786,8 @@ class TagSelector:
     """
     def __init__(self, tag):
         self.tag = tag
+        self.priority = 1
+        """カスケード順（スタイルルールの適用優先順位）"""
 
     def matches(self, node: Union[Text, Element]):
         """
@@ -796,7 +801,7 @@ class DescendantSelector:
 
     e.g. article div { ... } // article を祖先にもつ全ての div 要素をセレクト
     """
-    def __init__(self, ancestor, descendant):
+    def __init__(self, ancestor: Union[TagSelector, 'DescendantSelector'], descendant: Union[TagSelector, 'DescendantSelector']):
         self.ancestor: Union[TagSelector, DescendantSelector] = ancestor
         """
         祖先のセレクタ
@@ -809,6 +814,8 @@ class DescendantSelector:
 
         e.g. article div { ... } の div
         """
+        self.priority = ancestor.priority + descendant.priority
+        """カスケード順（スタイルルールの適用優先順位）"""
 
     def matches(self, node: Union[Text, Element]):
         """
@@ -854,6 +861,10 @@ def tree_to_list(tree: Union[Element, DocumentLayout, BlockLayout], list: list):
     for child in tree.children:
         tree_to_list(child, list)
     return list
+
+def cascade_priority(rule: tuple[Union[TagSelector, DescendantSelector], dict[str, str]]):
+    selector, body = rule
+    return selector.priority
 
 if __name__ == "__main__":
     import sys
