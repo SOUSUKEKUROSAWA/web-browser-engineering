@@ -789,7 +789,7 @@ class TagSelector:
         self.priority = 1
         """カスケード順（スタイルルールの適用優先順位）"""
 
-    def matches(self, node: Union[Text, Element]):
+    def matches(self, node: Union[Text, Element]) -> bool:
         """
         セレクタが要素に一致するかどうか
         """
@@ -817,7 +817,7 @@ class DescendantSelector:
         self.priority = ancestor.priority + descendant.priority
         """カスケード順（スタイルルールの適用優先順位）"""
 
-    def matches(self, node: Union[Text, Element]):
+    def matches(self, node: Union[Text, Element]) -> bool:
         """
         セレクタが要素に一致するかどうか
         """
