@@ -375,9 +375,6 @@ class BlockLayout:
         else:
             self.cursor_x = 0
             self.cursor_y = 0
-            self.weight = "normal"
-            self.style = "roman"
-            self.size = 12
             self.line: list[tuple[int, str, tkinter.font.Font]] = []
             """行バッファ"""
 
@@ -398,43 +395,18 @@ class BlockLayout:
         else:
             self.height = self.cursor_y
 
-    def recurse(self, tree: Union[Text, Element]):
+    def recurse(self, node: Union[Text, Element]):
         """
         インライン要素を再帰的にレイアウトする（ディスプレイリストを構築する）．
         """
-        if isinstance(tree, Text):
-            for word in tree.text.split():
-                self.word(word)
+        if isinstance(node, Text):
+            for word in node.text.split():
+                self.word(node, word)
         else:
-            self.open_tag(tree.tag)
-            for child in tree.children:
+            if node.tag == "br":
+                self.flush()
+            for child in node.children:
                 self.recurse(child)
-            self.close_tag(tree.tag)
-
-    def open_tag(self, tag):
-        if tag == "i":
-            self.style = "italic"
-        elif tag == "b":
-            self.weight = "bold"
-        elif tag == "small":
-            self.size -= 2
-        elif tag == "big":
-            self.size += 4
-        elif tag == "br":
-            self.flush()
-
-    def close_tag(self, tag):
-        if tag == "i":
-            self.style = "roman"
-        elif tag == "b":
-            self.weight = "normal"
-        elif tag == "small":
-            self.size += 2
-        elif tag == "big":
-            self.size -= 4
-        elif tag == "p":
-            self.flush()
-            self.cursor_y += VSTEP # 段落間のスペースを追加
 
     def flush(self):
         """
@@ -445,33 +417,38 @@ class BlockLayout:
         if not self.line: return # 空の行はスキップ
 
         # ベースラインに沿って単語を整列させる（テキストのサイズが異なるとバラバラになってしまうため）
-        max_ascent = max([font.metrics("ascent") for x, word, font in self.line]) # 行内のテキストの最大アセント（高さ）
+        max_ascent = max([font.metrics("ascent") for x, word, font, color in self.line]) # 行内のテキストの最大アセント（高さ）
         baseline = self.cursor_y + 1.25 * max_ascent
-        for rel_x, word, font in self.line:
+        for rel_x, word, font, color in self.line:
             x = self.x + rel_x
             y = self.y + baseline - font.metrics("ascent") # ベースラインからアセント（高さ）の分だけ上が，このテキストの左上になる．
-            self.display_list.append((x, y, word, font))
+            self.display_list.append((x, y, word, font, color))
 
         # 次の行の x, y 座標をセット
-        metrics = [font.metrics() for x, word, font in self.line]
+        metrics = [font.metrics() for x, word, font, color in self.line]
         max_descent = max([metric["descent"] for metric in metrics]) # 行内のテキストの最大ディセント（g や y などの文字の下側のはみ出し部分の深さ）
         self.cursor_y = baseline + 1.25 * max_descent
         self.cursor_x = 0
         self.line = [] # バッファをクリア
 
-    def word(self, word):
+    def word(self, node: Text, word):
         """
         個々の単語のディスプレイリストを作成する．
         """
-        font = get_font(self.size, self.weight, self.style)
+        weight = node.style["font-weight"]
+        style = node.style["font-style"]
+        if style == "normal": style = "roman" # CSS の normal を Tk の roman に変換
+        size = int(float(node.style["font-size"][:-2]) * .75) # CSS のピクセルを Tk のポイントに変換
+        font = get_font(size, weight, style)
         w = font.measure(word) # 英語は単語ごとにサイズが異なるので，都度幅を計算する．
+        color = node.style["color"]
 
         if self.cursor_x + w > self.width:
             # 折り返し
             self.flush()
 
         # その行のディスプレイリストをバッファに追加
-        self.line.append((self.cursor_x, word, font))
+        self.line.append((self.cursor_x, word, font, color))
 
         # x カーソルを次の単語まで移動
         self.cursor_x += w + font.measure(" ")
@@ -487,8 +464,8 @@ class BlockLayout:
             cmds.append(rect)
 
         if self.layout_mode() == "inline":
-            for x, y, word, font in self.display_list:
-                cmds.append(DrawText(x, y, word, font))
+            for x, y, word, font, color in self.display_list:
+                cmds.append(DrawText(self.x + x, self.y + y, word, font, color))
 
         bgcolor = self.node.style.get("background-color", "transparent")
 
@@ -504,12 +481,13 @@ class DrawText:
     テキストを描画するためのコマンド
     """
 
-    def __init__(self, x1, y1, text, font: tkinter.font.Font):
+    def __init__(self, x1, y1, text, font: tkinter.font.Font, color):
         self.top = y1
         self.left = x1
         self.text = text
         self.font = font
         self.bottom = y1 + font.metrics("linespace")
+        self.color = color
 
     def execute(self, scroll, canvas: tkinter.Canvas):
         """
@@ -521,7 +499,8 @@ class DrawText:
             self.top - scroll,
             text=self.text,
             font=self.font,
-            anchor='nw'
+            anchor='nw',
+            fill=self.color
         )
 
 class DrawRect:
@@ -566,7 +545,8 @@ class Browser:
         self.canvas = tkinter.Canvas(
             self.window,
             width=WIDTH,
-            height=HEIGHT
+            height=HEIGHT,
+            bg="white"
         )
         self.canvas.pack()
         self.scroll = 0
