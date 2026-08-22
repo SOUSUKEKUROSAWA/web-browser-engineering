@@ -804,6 +804,7 @@ class Browser:
         self.scroll = 0
         """画面座標(y)の一番上がページ座標(y)のどこに位置するのかを表すオフセット値"""
         self.window.bind("<Down>", self.scrolldown) # 下矢印キーがクリックされたら，scrolldown メソッドが呼ばれる．
+        self.window.bind("<Up>", self.scrollup)
 
     def draw(self):
         """
@@ -866,6 +867,15 @@ class Browser:
         # => self.scroll == self.document.height + 2*VSTEP - HEIGHT
         max_y = max(self.document.height + 2*VSTEP - HEIGHT, 0)
         self.scroll = min(self.scroll + SCROLL_STEP, max_y) # self.scroll + SCROLL_STEP => 次のスクロール位置
+        self.draw() # 再描画
+
+    def scrollup(self, e):
+        """
+        note:
+            最上部を過ぎて（マイナス方向へ）スクロールはできない．
+        """
+        # 現在のスクロール位置から SCROLL_STEP を引き、0未満にはならないようにする
+        self.scroll = max(self.scroll - SCROLL_STEP, 0)
         self.draw() # 再描画
 
 if __name__ == "__main__":
