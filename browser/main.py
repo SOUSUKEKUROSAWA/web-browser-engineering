@@ -117,6 +117,15 @@ def print_tree(node: Union[Text, Element], indent=0):
     for child in node.children:
         print_tree(child, indent + 2)
 
+def tree_to_list(tree: Union[Element, 'DocumentLayout', 'BlockLayout'], list: list):
+    """
+    ツリー（HTMLツリー or レイアウトツリー）をノードのリストに変換する．
+    """
+    list.append(tree)
+    for child in tree.children:
+        tree_to_list(child, list)
+    return list
+
 class HTMLParser:
     SELF_CLOSING_TAGS = ["area","base","br","col","embed","hr","img","input","link","meta","param","source","track","wbr",]
     HEAD_TAGS = ["base", "basefont", "bgsound", "noscript", "link", "meta", "title", "style", "script"]
@@ -246,6 +255,199 @@ class HTMLParser:
             parent.children.append(node)
         return self.unfinished.pop()
 
+class CSSParser:
+    def __init__(self, s):
+        self.s: list[str] = s
+        """パース対象のテキスト"""
+        self.i = 0
+        """パーサの現在位置"""
+
+    def whitespace(self):
+        """
+        空白を読み飛ばす（パーサのインデックスだけ進める）．
+        """
+        while self.i < len(self.s) and self.s[self.i].isspace():
+            self.i += 1
+
+    def literal(self, literal):
+        """
+        リテラルを読み飛ばす（コロン「:」など）．
+        """
+        if not (self.i < len(self.s) and self.s[self.i] == literal):
+            raise Exception("Parsing error")
+        self.i += 1
+
+    def word(self) -> str:
+        """
+        プロパティをパースする．
+
+        return:
+            プロパティ名やその値
+        """
+        start = self.i
+
+        while self.i < len(self.s):
+            if self.s[self.i].isalnum() or self.s[self.i] in "#-.%":
+                # プロパティとして許容されている文字である場合
+                self.i += 1
+            else:
+                break
+
+        if not (self.i > start):
+            raise Exception("Parsing error")
+
+        return self.s[start:self.i]
+
+    def ignore_until(self, chars: list[str]):
+        """
+        chars で指定された文字までスキップする．
+
+        e.g. パースに失敗した場合，パースできないプロパティと値のペアはスキップして，
+             次のパース可能な文字列まで移動して，エラーから復帰するのに使用する．
+
+        return:
+            chars で指定された文字列のうち，最初に現れた文字
+        """
+        while self.i < len(self.s):
+            if self.s[self.i] in chars:
+                return self.s[self.i]
+            else:
+                self.i += 1
+
+        return None
+
+    def pair(self):
+        """
+        プロパティ名とその値のペアをパースする．
+
+        return:
+            プロパティ名
+            プロパティ値
+        """
+        prop = self.word()
+        self.whitespace()
+        self.literal(":")
+        self.whitespace()
+        val = self.word()
+
+        return prop.casefold(), val
+
+    def selector(self):
+        """
+        セレクタをパースする．
+
+        e.g. article div { ... } の article div の部分．
+        """
+        out = TagSelector(self.word().casefold())
+        self.whitespace()
+        while self.i < len(self.s) and self.s[self.i] != "{":
+            tag = self.word()
+            descendant = TagSelector(tag.casefold())
+            out = DescendantSelector(out, descendant)
+            self.whitespace()
+        return out
+
+    def body(self):
+        """
+        style 属性全体をパースする．
+
+        e.g. article div { font-size: 20px, color: red } の font-size: 20px, color: red の部分．
+        """
+        pairs = {}
+
+        while self.i < len(self.s) and self.s[self.i] != "}":
+            try:
+                prop, val = self.pair()
+                pairs[prop.casefold()] = val
+                self.whitespace()
+                self.literal(";")
+                self.whitespace()
+            except Exception:
+                why = self.ignore_until([";", "}"])
+                if why == ";":
+                    self.literal(";")
+                    self.whitespace()
+                else:
+                    break
+
+        return pairs
+
+    def parse(self):
+        """
+        .css 形式のテキストをパースして，セレクタとスタイル設定のルールのペアを返す．
+        """
+        rules = []
+
+        while self.i < len(self.s):
+            try:
+                self.whitespace()
+                selector = self.selector()
+                self.literal("{")
+                self.whitespace()
+                body = self.body()
+                self.literal("}")
+                rules.append((selector, body))
+            except Exception:
+                why = self.ignore_until(["}"])
+                if why == "}":
+                    self.literal("}")
+                    self.whitespace()
+                else:
+                    break
+
+        return rules
+
+class TagSelector:
+    """
+    タグセレクタ
+
+    e.g. div { ... } // 全ての div 要素をセレクト
+    """
+    def __init__(self, tag):
+        self.tag = tag
+        self.priority = 1
+        """カスケード順（スタイルルールの適用優先順位）"""
+
+    def matches(self, node: Union[Text, Element]) -> bool:
+        """
+        セレクタが要素に一致するかどうか
+        """
+        return isinstance(node, Element) and self.tag == node.tag
+
+class DescendantSelector:
+    """
+    子孫セレクタ
+
+    e.g. article div { ... } // article を祖先にもつ全ての div 要素をセレクト
+    """
+    def __init__(self, ancestor: Union[TagSelector, 'DescendantSelector'], descendant: Union[TagSelector, 'DescendantSelector']):
+        self.ancestor: Union[TagSelector, DescendantSelector] = ancestor
+        """
+        祖先のセレクタ
+
+        e.g. article div { ... } の article
+        """
+        self.descendant: Union[TagSelector, DescendantSelector] = descendant
+        """
+        子孫のセレクタ
+
+        e.g. article div { ... } の div
+        """
+        self.priority = ancestor.priority + descendant.priority
+        """カスケード順（スタイルルールの適用優先順位）"""
+
+    def matches(self, node: Union[Text, Element]) -> bool:
+        """
+        セレクタが要素に一致するかどうか
+        """
+        if not self.descendant.matches(node): return False
+
+        while node.parent:
+            if self.ancestor.matches(node.parent): return True
+            node = node.parent
+
+        return False
+
 FONTS = {}
 """フォントキャッシュ"""
 
@@ -265,6 +467,57 @@ def get_font(size, weight, style) -> tkinter.font.Font:
 
     return FONTS[key][0]
 
+DEFAULT_STYLE_SHEET = CSSParser(open("browser.css").read()).parse()
+
+INHERITED_PROPERTIES = {
+    "font-size": "16px",
+    "font-style": "normal",
+    "font-weight": "normal",
+    "color": "black",
+}
+
+def style(node: Union[Text, Element], rules: list[tuple[Union[TagSelector, DescendantSelector], dict[str, str]]]):
+    """
+    パースされた style 属性を HTML ツリーの各ノードの style フィールドに保存する．
+    """
+    for property, default_value in INHERITED_PROPERTIES.items():
+        if node.parent:
+            node.style[property] = node.parent.style[property]
+        else:
+            node.style[property] = default_value
+
+    # スタイルシートで定義されたスタイルを設定する．
+    for selector, body in rules:
+        if not selector.matches(node): continue
+
+        for property, value in body.items():
+            node.style[property] = value
+
+    # style 属性で定義されたスタイルはスタイルシートで定義されたスタイルを上書きする．
+    if isinstance(node, Element) and "style" in node.attributes:
+        pairs = CSSParser(node.attributes["style"]).body()
+        for property, value in pairs.items():
+            node.style[property] = value
+
+    # 計算済みスタイル: font-size の継承は，％表示を絶対的なピクセル単位に解決してから継承する．
+    if str(node.style["font-size"]).endswith("%"):
+        if node.parent:
+            parent_font_size = node.parent.style["font-size"]
+        else:
+            # エッジケース: ルートの html 要素の％は，デフォルトのフォントサイズに対する相対値を意味する．
+            parent_font_size = INHERITED_PROPERTIES["font-size"]
+
+        node_pct = float(node.style["font-size"][:-1]) / 100 # e.g. "50%" -> 0.5
+        parent_px = float(parent_font_size[:-2]) # e.g. "16px" -> 16.0
+        node.style["font-size"] = str(node_pct * parent_px) + "px"
+
+    for child in node.children:
+        style(child, rules)
+
+def cascade_priority(rule: tuple[Union[TagSelector, DescendantSelector], dict[str, str]]):
+    selector, body = rule
+    return selector.priority
+
 WIDTH = 800
 """キャンバス全体の幅"""
 HEIGHT = 600
@@ -280,7 +533,6 @@ class DocumentLayout:
     """
     レイアウトツリーのルート
     """
-
     def __init__(self, node):
         self.node = node
         """HTML ツリー"""
@@ -615,259 +867,6 @@ class Browser:
         max_y = max(self.document.height + 2*VSTEP - HEIGHT, 0)
         self.scroll = min(self.scroll + SCROLL_STEP, max_y) # self.scroll + SCROLL_STEP => 次のスクロール位置
         self.draw() # 再描画
-
-class CSSParser:
-    def __init__(self, s):
-        self.s: list[str] = s
-        """パース対象のテキスト"""
-        self.i = 0
-        """パーサの現在位置"""
-
-    def whitespace(self):
-        """
-        空白を読み飛ばす（パーサのインデックスだけ進める）．
-        """
-        while self.i < len(self.s) and self.s[self.i].isspace():
-            self.i += 1
-
-    def word(self) -> str:
-        """
-        プロパティをパースする．
-
-        return:
-            プロパティ名やその値
-        """
-        start = self.i
-
-        while self.i < len(self.s):
-            if self.s[self.i].isalnum() or self.s[self.i] in "#-.%":
-                # プロパティとして許容されている文字である場合
-                self.i += 1
-            else:
-                break
-
-        if not (self.i > start):
-            raise Exception("Parsing error")
-
-        return self.s[start:self.i]
-
-    def literal(self, literal):
-        """
-        リテラルを読み飛ばす（コロン「:」など）．
-        """
-        if not (self.i < len(self.s) and self.s[self.i] == literal):
-            raise Exception("Parsing error")
-        self.i += 1
-
-    def pair(self):
-        """
-        プロパティ名とその値のペアをパースする．
-
-        return:
-            プロパティ名
-            プロパティ値
-        """
-        prop = self.word()
-        self.whitespace()
-        self.literal(":")
-        self.whitespace()
-        val = self.word()
-
-        return prop.casefold(), val
-
-    def body(self):
-        """
-        style 属性全体をパースする．
-
-        e.g. article div { font-size: 20px, color: red } の font-size: 20px, color: red の部分．
-        """
-        pairs = {}
-
-        while self.i < len(self.s) and self.s[self.i] != "}":
-            try:
-                prop, val = self.pair()
-                pairs[prop.casefold()] = val
-                self.whitespace()
-                self.literal(";")
-                self.whitespace()
-            except Exception:
-                why = self.ignore_until([";", "}"])
-                if why == ";":
-                    self.literal(";")
-                    self.whitespace()
-                else:
-                    break
-
-        return pairs
-
-    def ignore_until(self, chars: list[str]):
-        """
-        chars で指定された文字までスキップする．
-
-        e.g. パースに失敗した場合，パースできないプロパティと値のペアはスキップして，
-             次のパース可能な文字列まで移動して，エラーから復帰するのに使用する．
-
-        return:
-            chars で指定された文字列のうち，最初に現れた文字
-        """
-        while self.i < len(self.s):
-            if self.s[self.i] in chars:
-                return self.s[self.i]
-            else:
-                self.i += 1
-
-        return None
-
-    def selector(self):
-        """
-        セレクタをパースする．
-
-        e.g. article div { ... } の article div の部分．
-        """
-        out = TagSelector(self.word().casefold())
-        self.whitespace()
-        while self.i < len(self.s) and self.s[self.i] != "{":
-            tag = self.word()
-            descendant = TagSelector(tag.casefold())
-            out = DescendantSelector(out, descendant)
-            self.whitespace()
-        return out
-
-    def parse(self):
-        """
-        .css 形式のテキストをパースして，セレクタとスタイル設定のルールのペアを返す．
-        """
-        rules = []
-
-        while self.i < len(self.s):
-            try:
-                self.whitespace()
-                selector = self.selector()
-                self.literal("{")
-                self.whitespace()
-                body = self.body()
-                self.literal("}")
-                rules.append((selector, body))
-            except Exception:
-                why = self.ignore_until(["}"])
-                if why == "}":
-                    self.literal("}")
-                    self.whitespace()
-                else:
-                    break
-
-        return rules
-
-class TagSelector:
-    """
-    タグセレクタ
-
-    e.g. div { ... } // 全ての div 要素をセレクト
-    """
-    def __init__(self, tag):
-        self.tag = tag
-        self.priority = 1
-        """カスケード順（スタイルルールの適用優先順位）"""
-
-    def matches(self, node: Union[Text, Element]) -> bool:
-        """
-        セレクタが要素に一致するかどうか
-        """
-        return isinstance(node, Element) and self.tag == node.tag
-
-class DescendantSelector:
-    """
-    子孫セレクタ
-
-    e.g. article div { ... } // article を祖先にもつ全ての div 要素をセレクト
-    """
-    def __init__(self, ancestor: Union[TagSelector, 'DescendantSelector'], descendant: Union[TagSelector, 'DescendantSelector']):
-        self.ancestor: Union[TagSelector, DescendantSelector] = ancestor
-        """
-        祖先のセレクタ
-
-        e.g. article div { ... } の article
-        """
-        self.descendant: Union[TagSelector, DescendantSelector] = descendant
-        """
-        子孫のセレクタ
-
-        e.g. article div { ... } の div
-        """
-        self.priority = ancestor.priority + descendant.priority
-        """カスケード順（スタイルルールの適用優先順位）"""
-
-    def matches(self, node: Union[Text, Element]) -> bool:
-        """
-        セレクタが要素に一致するかどうか
-        """
-        if not self.descendant.matches(node): return False
-
-        while node.parent:
-            if self.ancestor.matches(node.parent): return True
-            node = node.parent
-
-        return False
-
-DEFAULT_STYLE_SHEET = CSSParser(open("browser.css").read()).parse()
-
-INHERITED_PROPERTIES = {
-    "font-size": "16px",
-    "font-style": "normal",
-    "font-weight": "normal",
-    "color": "black",
-}
-
-def style(node: Union[Text, Element], rules: list[tuple[Union[TagSelector, DescendantSelector], dict[str, str]]]):
-    """
-    パースされた style 属性を HTML ツリーの各ノードの style フィールドに保存する．
-    """
-    for property, default_value in INHERITED_PROPERTIES.items():
-        if node.parent:
-            node.style[property] = node.parent.style[property]
-        else:
-            node.style[property] = default_value
-
-    # スタイルシートで定義されたスタイルを設定する．
-    for selector, body in rules:
-        if not selector.matches(node): continue
-
-        for property, value in body.items():
-            node.style[property] = value
-
-    # style 属性で定義されたスタイルはスタイルシートで定義されたスタイルを上書きする．
-    if isinstance(node, Element) and "style" in node.attributes:
-        pairs = CSSParser(node.attributes["style"]).body()
-        for property, value in pairs.items():
-            node.style[property] = value
-
-    # 計算済みスタイル: font-size の継承は，％表示を絶対的なピクセル単位に解決してから継承する．
-    if str(node.style["font-size"]).endswith("%"):
-        if node.parent:
-            parent_font_size = node.parent.style["font-size"]
-        else:
-            # エッジケース: ルートの html 要素の％は，デフォルトのフォントサイズに対する相対値を意味する．
-            parent_font_size = INHERITED_PROPERTIES["font-size"]
-
-        node_pct = float(node.style["font-size"][:-1]) / 100 # e.g. "50%" -> 0.5
-        parent_px = float(parent_font_size[:-2]) # e.g. "16px" -> 16.0
-        node.style["font-size"] = str(node_pct * parent_px) + "px"
-
-    for child in node.children:
-        style(child, rules)
-
-def tree_to_list(tree: Union[Element, DocumentLayout, BlockLayout], list: list):
-    """
-    ツリー（HTMLツリー or レイアウトツリー）をノードのリストに変換する．
-    """
-    list.append(tree)
-    for child in tree.children:
-        tree_to_list(child, list)
-    return list
-
-def cascade_priority(rule: tuple[Union[TagSelector, DescendantSelector], dict[str, str]]):
-    selector, body = rule
-    return selector.priority
 
 if __name__ == "__main__":
     import sys
