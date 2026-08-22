@@ -96,6 +96,7 @@ class Text:
         self.text: str = text
         self.children = [] # note: テキストノードに子は存在しないが，Element との一貫性のために定義している．
         self.parent: Element = parent
+        self.style = {}
 
     def __repr__(self):
         return repr(self.text)
@@ -106,6 +107,7 @@ class Element:
         self.attributes = attributes
         self.children: list[Union[Text, Element]] = []
         self.parent: Union[Element, None] = parent
+        self.style = {}
 
     def __repr__(self):
         return "<" + self.tag + ">"
@@ -488,8 +490,6 @@ class BlockLayout:
             for x, y, word, font in self.display_list:
                 cmds.append(DrawText(x, y, word, font))
 
-        # node.style は style() 内で動的に追加されている属性なので，ここで検証．
-        assert hasattr(self.node, "style") and isinstance(self.node.style, dict)
         bgcolor = self.node.style.get("background-color", "transparent")
 
         if bgcolor != "transparent":
@@ -842,12 +842,8 @@ def style(node: Union[Text, Element], rules: list[tuple[Union[TagSelector, Desce
     """
     パースされた style 属性をノードの style フィールドに保存する．
     """
-    node.style = {}
-
     for property, default_value in INHERITED_PROPERTIES.items():
         if node.parent:
-            # node.style は style() 内で動的に追加されている属性なので，ここで検証．
-            assert hasattr(node.parent, "style") and isinstance(node.parent.style, dict)
             node.style[property] = node.parent.style[property]
         else:
             node.style[property] = default_value
