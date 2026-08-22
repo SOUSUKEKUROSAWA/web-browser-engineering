@@ -820,7 +820,7 @@ INHERITED_PROPERTIES = {
 
 def style(node: Union[Text, Element], rules: list[tuple[Union[TagSelector, DescendantSelector], dict[str, str]]]):
     """
-    パースされた style 属性をノードの style フィールドに保存する．
+    パースされた style 属性を HTML ツリーの各ノードの style フィールドに保存する．
     """
     for property, default_value in INHERITED_PROPERTIES.items():
         if node.parent:
