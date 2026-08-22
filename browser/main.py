@@ -831,11 +831,26 @@ class DescendantSelector:
 
 DEFAULT_STYLE_SHEET = CSSParser(open("browser.css").read()).parse()
 
-def style(node, rules: list[tuple[Union[TagSelector, DescendantSelector], dict[str, str]]]):
+INHERITED_PROPERTIES = {
+    "font-size": "16px",
+    "font-style": "normal",
+    "font-weight": "normal",
+    "color": "black",
+}
+
+def style(node: Union[Text, Element], rules: list[tuple[Union[TagSelector, DescendantSelector], dict[str, str]]]):
     """
     パースされた style 属性をノードの style フィールドに保存する．
     """
     node.style = {}
+
+    for property, default_value in INHERITED_PROPERTIES.items():
+        if node.parent:
+            # node.style は style() 内で動的に追加されている属性なので，ここで検証．
+            assert hasattr(node.parent, "style") and isinstance(node.parent.style, dict)
+            node.style[property] = node.parent.style[property]
+        else:
+            node.style[property] = default_value
 
     # スタイルシートで定義されたスタイルを設定する．
     for selector, body in rules:
@@ -849,6 +864,18 @@ def style(node, rules: list[tuple[Union[TagSelector, DescendantSelector], dict[s
         pairs = CSSParser(node.attributes["style"]).body()
         for property, value in pairs.items():
             node.style[property] = value
+
+    # 計算済みスタイル: font-size の継承は，％表示を絶対的なピクセル単位に解決してから継承する．
+    if str(node.style["font-size"]).endswith("%"):
+        if node.parent:
+            parent_font_size = node.parent.style["font-size"]
+        else:
+            # エッジケース: ルートの html 要素の％は，デフォルトのフォントサイズに対する相対値を意味する．
+            parent_font_size = INHERITED_PROPERTIES["font-size"]
+
+        node_pct = float(node.style["font-size"][:-1]) / 100 # e.g. "50%" -> 0.5
+        parent_px = float(parent_font_size[:-2]) # e.g. "16px" -> 16.0
+        node.style["font-size"] = str(node_pct * parent_px) + "px"
 
     for child in node.children:
         style(child, rules)
