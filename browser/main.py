@@ -706,6 +706,9 @@ class BlockLayout:
         self.cursor_x += w + font.measure(" ")
 
     def paint(self):
+        """
+        レイアウトオブジェクトからディスプレイリストに格納する描画命令を構築する．
+        """
         cmds = []
 
         # コード例に使用される pre タグの背景をグレーにする．
