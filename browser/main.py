@@ -576,8 +576,8 @@ class BlockLayout:
         #
         # 例えば，HTMLツリーとして解析は必要だが，
         # 描画はしない head タグなどはレイアウトツリーには含まれないなど，使い分けが可能
-        self.parent: BlockLayout = parent
-        self.previous: BlockLayout = previous
+        self.parent: Union[DocumentLayout, BlockLayout] = parent
+        self.previous: Union[BlockLayout, None] = previous
         """１つ前の（兄弟の）レイアウトオブジェクト"""
         self.children: list[Union[BlockLayout, LineLayout]] = []
         self.display_list = []
