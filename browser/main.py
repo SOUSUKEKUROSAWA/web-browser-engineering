@@ -579,7 +579,7 @@ class BlockLayout:
         self.parent: BlockLayout = parent
         self.previous: BlockLayout = previous
         """１つ前の（兄弟の）レイアウトオブジェクト"""
-        self.children: list[BlockLayout] = []
+        self.children: list[Union[BlockLayout, LineLayout]] = []
         self.display_list = []
         """ページ座標やフォント情報を保持するリスト"""
         self.x = None
@@ -625,15 +625,8 @@ class BlockLayout:
                 self.children.append(next)
                 previous = next
         else:
-            self.cursor_x = 0
-            self.cursor_y = 0
-            self.line: list[tuple[int, str, tkinter.font.Font]] = []
-            """行バッファ"""
-
+            self.new_line()
             self.recurse(self.node)
-
-            # 最終行のフォーマット
-            self.flush()
 
         # note: width と height の計算順
         #   width: 親ブロックの幅が「あらかじめ」計算されている必要がある．＝ layout() の再帰呼び出しの「前」に計算する必要がある．
@@ -641,11 +634,8 @@ class BlockLayout:
         for child in self.children:
             child.layout()
 
-        if mode == "block":
-            # 全ての子を含むのに十分な高さが必要．
-            self.height = sum([child.height for child in self.children])
-        else:
-            self.height = self.cursor_y
+        # 全ての子を含むのに十分な高さが必要．
+        self.height = sum([child.height for child in self.children])
 
     def recurse(self, node: Union[Text, Element]):
         """
@@ -655,8 +645,6 @@ class BlockLayout:
             for word in node.text.split():
                 self.word(node, word)
         else:
-            if node.tag == "br":
-                self.flush()
             for child in node.children:
                 self.recurse(child)
 
@@ -666,8 +654,6 @@ class BlockLayout:
 
         その行のベースラインの計算と，改行後のカーソル位置の計算．
         """
-        if not self.line: return # 空の行はスキップ
-
         # ベースラインに沿って単語を整列させる（テキストのサイズが異なるとバラバラになってしまうため）
         max_ascent = max([font.metrics("ascent") for x, word, font, color in self.line]) # 行内のテキストの最大アセント（高さ）
         baseline = self.cursor_y + 1.25 * max_ascent
@@ -683,9 +669,18 @@ class BlockLayout:
         self.cursor_x = 0
         self.line = [] # バッファをクリア
 
+    def new_line(self):
+        """
+        改行処理
+        """
+        self.cursor_x = 0
+        last_line = self.children[-1] if self.children else None
+        new_line = LineLayout(self.node, self, last_line)
+        self.children.append(new_line)
+
     def word(self, node: Text, word):
         """
-        個々の単語のディスプレイリストを作成する．
+        個々の単語をレイアウトオブジェクトとしてレイアウトツリーに組み込む．
         """
         weight = node.style["font-weight"]
         style = node.style["font-style"]
@@ -693,14 +688,16 @@ class BlockLayout:
         size = int(float(node.style["font-size"][:-2]) * .75) # CSS のピクセルを Tk のポイントに変換
         font = get_font(size, weight, style)
         w = font.measure(word) # 英語は単語ごとにサイズが異なるので，都度幅を計算する．
-        color = node.style["color"]
 
         if self.cursor_x + w > self.width:
             # 折り返し
-            self.flush()
+            self.new_line()
 
-        # その行のディスプレイリストをバッファに追加
-        self.line.append((self.cursor_x, word, font, color))
+        # その行（LineLayout）に単語（TextLayout）を追加
+        line = self.children[-1]
+        previous_word = line.children[-1] if line.children else None
+        text = TextLayout(node, word, line, previous_word)
+        line.children.append(text)
 
         # x カーソルを次の単語まで移動
         self.cursor_x += w + font.measure(" ")
@@ -730,6 +727,29 @@ class BlockLayout:
             cmds.append(rect)
 
         return cmds
+
+class LineLayout:
+    """
+    1行を意味するレイアウトオブジェクト．
+    BlockLayout の子となる．
+    """
+    def __init__(self, node, parent, previous):
+        self.node = node
+        self.parent = parent
+        self.previous = previous
+        self.children = []
+
+class TextLayout:
+    """
+    1単語を意味するレイアウトオブジェクト．
+    LineLayout の子となる．
+    """
+    def __init__(self, node, word, parent, previous):
+        self.node = node
+        self.word = word
+        self.parent = parent
+        self.previous = previous
+        self.children = []
 
 class DrawText:
     """
