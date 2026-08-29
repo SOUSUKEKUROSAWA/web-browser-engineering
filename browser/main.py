@@ -580,8 +580,6 @@ class BlockLayout:
         self.previous: Union[BlockLayout, None] = previous
         """１つ前の（兄弟の）レイアウトオブジェクト"""
         self.children: list[Union[BlockLayout, LineLayout]] = []
-        self.display_list = []
-        """ページ座標やフォント情報を保持するリスト"""
         self.x = None
         self.y = None
         self.width = None
@@ -648,27 +646,6 @@ class BlockLayout:
             for child in node.children:
                 self.recurse(child)
 
-    def flush(self):
-        """
-        改行の前処理
-
-        その行のベースラインの計算と，改行後のカーソル位置の計算．
-        """
-        # ベースラインに沿って単語を整列させる（テキストのサイズが異なるとバラバラになってしまうため）
-        max_ascent = max([font.metrics("ascent") for x, word, font, color in self.line]) # 行内のテキストの最大アセント（高さ）
-        baseline = self.cursor_y + 1.25 * max_ascent
-        for rel_x, word, font, color in self.line:
-            x = self.x + rel_x
-            y = self.y + baseline - font.metrics("ascent") # ベースラインからアセント（高さ）の分だけ上が，このテキストの左上になる．
-            self.display_list.append((x, y, word, font, color))
-
-        # 次の行の x, y 座標をセット
-        metrics = [font.metrics() for x, word, font, color in self.line]
-        max_descent = max([metric["descent"] for metric in metrics]) # 行内のテキストの最大ディセント（g や y などの文字の下側のはみ出し部分の深さ）
-        self.cursor_y = baseline + 1.25 * max_descent
-        self.cursor_x = 0
-        self.line = [] # バッファをクリア
-
     def new_line(self):
         """
         改行処理
@@ -715,10 +692,6 @@ class BlockLayout:
             rect = DrawRect(self.x, self.y, x2, y2, "gray")
             cmds.append(rect)
 
-        if self.layout_mode() == "inline":
-            for x, y, word, font, color in self.display_list:
-                cmds.append(DrawText(self.x + x, self.y + y, word, font, color))
-
         bgcolor = self.node.style.get("background-color", "transparent")
 
         if bgcolor != "transparent":
@@ -735,21 +708,66 @@ class LineLayout:
     """
     def __init__(self, node, parent, previous):
         self.node = node
-        self.parent = parent
-        self.previous = previous
-        self.children = []
+        self.parent: BlockLayout = parent
+        self.previous: Union[LineLayout, None] = previous
+        self.children: list[TextLayout] = []
+
+    def layout(self):
+        self.width = self.parent.width
+        self.x = self.parent.x
+
+        if self.previous:
+            self.y = self.previous.y + self.previous.height
+        else:
+            self.y = self.parent.y
+
+        for word in self.children:
+            word.layout()
+
+        # ベースラインに沿って単語を整列させる（テキストのサイズが異なるとバラバラになってしまうため）
+        max_ascent = max([word.font.metrics("ascent") for word in self.children]) # 行内のテキストの最大アセント（高さ）
+        baseline = self.y + 1.25 * max_ascent
+        for word in self.children:
+            # note: TextLayout の y はその行のレイアウトが完了した後にしか計算できないので，後から追加している．
+            word.y = baseline - word.font.metrics("ascent")
+        max_descent = max([word.font.metrics("descent") for word in self.children]) # 行内のテキストの最大ディセント（g や y などの文字の下側のはみ出し部分の深さ）
+
+        self.height = 1.25 * (max_ascent + max_descent)
+
+    def paint(self):
+        return []
 
 class TextLayout:
     """
     1単語を意味するレイアウトオブジェクト．
     LineLayout の子となる．
     """
-    def __init__(self, node, word, parent, previous):
+    def __init__(self, node: Text, word, parent, previous):
         self.node = node
         self.word = word
-        self.parent = parent
-        self.previous = previous
+        self.parent: LineLayout = parent
+        self.previous: Union[TextLayout, None] = previous
         self.children = []
+
+    def layout(self):
+        weight = self.node.style["font-weight"]
+        style = self.node.style["font-style"]
+        if style == "normal": style = "roman" # CSS の normal を Tk の roman に変換
+        size = int(float(self.node.style["font-size"][:-2]) * .75) # CSS のピクセルを Tk のポイントに変換
+        self.font = get_font(size, weight, style)
+
+        self.width = self.font.measure(self.word)
+        if self.previous:
+            space = self.previous.font.measure(" ") # 1つ前の単語に適用されているフォント基準でスペース幅を計算
+            self.x = self.previous.x + space + self.previous.width
+        else:
+            self.x = self.parent.x
+
+        self.height = self.font.metrics("linespace")
+
+    def paint(self):
+        color = self.node.style["color"]
+        return [DrawText(self.x, self.y, self.word, self.font, color)]
 
 class DrawText:
     """
