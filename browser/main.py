@@ -625,7 +625,7 @@ class BlockLayout:
                 self.children.append(next)
                 previous = next
         else:
-            self.new_line()
+            self.new_line() # 最初の1行目（空のLineLayout）を準備
             self.recurse(self.node)
 
         # note: width と height の計算順
