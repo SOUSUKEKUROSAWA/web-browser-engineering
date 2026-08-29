@@ -533,7 +533,7 @@ class DocumentLayout:
     """
     レイアウトツリーのルート
     """
-    def __init__(self, node):
+    def __init__(self, node: Element):
         self.node = node
         """HTML ツリー"""
         self.parent = None
@@ -556,7 +556,7 @@ class DocumentLayout:
         return []
 
 class BlockLayout:
-    def __init__(self, node: Element, parent, previous):
+    def __init__(self, node: Union[Element, Text], parent, previous):
         self.node = node
         """
         HTMLツリー
