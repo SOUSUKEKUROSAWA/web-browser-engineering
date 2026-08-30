@@ -1,8 +1,13 @@
-from typing import Union
+from typing import Optional, Union
 import tkinter
 import tkinter.font
 import socket
 import ssl
+
+HTMLNode = Union['Element', 'Text']
+LayoutNode = Union['DocumentLayout', 'BlockLayout', 'LineLayout', 'TextLayout']
+TreeNode = Union[HTMLNode, LayoutNode]
+Selector = Union['TagSelector', 'DescendantSelector']
 
 class URL:
     def __init__(self, url: str):
@@ -105,21 +110,24 @@ class Element:
     def __init__(self, tag, attributes: dict, parent):
         self.tag = tag
         self.attributes = attributes
-        self.children: list[Union[Text, Element]] = []
-        self.parent: Union[Element, None] = parent
+        self.children: list[HTMLNode] = []
+        self.parent: Optional[Element] = parent
         self.style = {}
 
     def __repr__(self):
         return "<" + self.tag + ">"
 
-def print_tree(node: Union[Text, Element], indent=0):
+def print_tree(node: HTMLNode, indent=0):
     print(" " * indent, node)
     for child in node.children:
         print_tree(child, indent + 2)
 
-def tree_to_list(tree: Union[Element, 'DocumentLayout', 'BlockLayout'], list: list):
+def tree_to_list(tree: TreeNode, list: list[TreeNode]) -> list[TreeNode]:
     """
     ツリー（HTMLツリー or レイアウトツリー）をノードのリストに変換する．
+
+    param:
+        list: 結果を格納するリスト（出力パラメータ）
     """
     list.append(tree)
     for child in tree.children:
@@ -134,7 +142,7 @@ class HTMLParser:
     def __init__(self, body):
         self.body = body
         """分析している HTML 本文"""
-        self.unfinished: list[Union[Text, Element]] = []
+        self.unfinished: list[HTMLNode] = []
         """未完成の HTML ツリー"""
 
     def parse(self) -> Element:
@@ -408,7 +416,7 @@ class TagSelector:
         self.priority = 1
         """カスケード順（スタイルルールの適用優先順位）"""
 
-    def matches(self, node: Union[Text, Element]) -> bool:
+    def matches(self, node: HTMLNode) -> bool:
         """
         セレクタが要素に一致するかどうか
         """
@@ -420,14 +428,14 @@ class DescendantSelector:
 
     e.g. article div { ... } // article を祖先にもつ全ての div 要素をセレクト
     """
-    def __init__(self, ancestor: Union[TagSelector, 'DescendantSelector'], descendant: Union[TagSelector, 'DescendantSelector']):
-        self.ancestor: Union[TagSelector, DescendantSelector] = ancestor
+    def __init__(self, ancestor: Selector, descendant: Selector):
+        self.ancestor: Selector = ancestor
         """
         祖先のセレクタ
 
         e.g. article div { ... } の article
         """
-        self.descendant: Union[TagSelector, DescendantSelector] = descendant
+        self.descendant: Selector = descendant
         """
         子孫のセレクタ
 
@@ -436,7 +444,7 @@ class DescendantSelector:
         self.priority = ancestor.priority + descendant.priority
         """カスケード順（スタイルルールの適用優先順位）"""
 
-    def matches(self, node: Union[Text, Element]) -> bool:
+    def matches(self, node: HTMLNode) -> bool:
         """
         セレクタが要素に一致するかどうか
         """
@@ -476,7 +484,7 @@ INHERITED_PROPERTIES = {
     "color": "black",
 }
 
-def style(node: Union[Text, Element], rules: list[tuple[Union[TagSelector, DescendantSelector], dict[str, str]]]):
+def style(node: HTMLNode, rules: list[tuple[Selector, dict[str, str]]]):
     """
     パースされた style 属性を HTML ツリーの各ノードの style フィールドに保存する．
     """
@@ -514,7 +522,7 @@ def style(node: Union[Text, Element], rules: list[tuple[Union[TagSelector, Desce
     for child in node.children:
         style(child, rules)
 
-def cascade_priority(rule: tuple[Union[TagSelector, DescendantSelector], dict[str, str]]):
+def cascade_priority(rule: tuple[Selector, dict[str, str]]):
     selector, body = rule
     return selector.priority
 
@@ -556,7 +564,7 @@ class DocumentLayout:
         return []
 
 class BlockLayout:
-    def __init__(self, node: Union[Element, Text], parent, previous):
+    def __init__(self, node: HTMLNode, parent, previous):
         self.node = node
         """
         HTMLツリー
@@ -577,7 +585,7 @@ class BlockLayout:
         # 例えば，HTMLツリーとして解析は必要だが，
         # 描画はしない head タグなどはレイアウトツリーには含まれないなど，使い分けが可能
         self.parent: Union[DocumentLayout, BlockLayout] = parent
-        self.previous: Union[BlockLayout, None] = previous
+        self.previous: Optional[BlockLayout] = previous
         """１つ前の（兄弟の）レイアウトオブジェクト"""
         self.children: list[Union[BlockLayout, LineLayout]] = []
         self.x = None
@@ -635,7 +643,7 @@ class BlockLayout:
         # 全ての子を含むのに十分な高さが必要．
         self.height = sum([child.height for child in self.children])
 
-    def recurse(self, node: Union[Text, Element]):
+    def recurse(self, node: HTMLNode):
         """
         インライン要素を再帰的にレイアウトする（ディスプレイリストを構築する）．
         """
@@ -709,7 +717,7 @@ class LineLayout:
     def __init__(self, node, parent, previous):
         self.node = node
         self.parent: BlockLayout = parent
-        self.previous: Union[LineLayout, None] = previous
+        self.previous: Optional[LineLayout] = previous
         self.children: list[TextLayout] = []
 
     def layout(self):
@@ -746,7 +754,7 @@ class TextLayout:
         self.node = node
         self.word = word
         self.parent: LineLayout = parent
-        self.previous: Union[TextLayout, None] = previous
+        self.previous: Optional[TextLayout] = previous
         self.children = []
 
     def layout(self):
@@ -821,7 +829,7 @@ class DrawRect:
             fill=self.color
         )
 
-def paint_tree(layout_object: Union[BlockLayout, DocumentLayout], display_list: list):
+def paint_tree(layout_object: LayoutNode, display_list: list):
     """
     レイアウトツリー全体のディスプレイリストを構築する．
     """
