@@ -844,8 +844,12 @@ class Browser:
         self.canvas.pack()
         self.scroll = 0
         """画面座標(y)の一番上がページ座標(y)のどこに位置するのかを表すオフセット値"""
-        self.window.bind("<Down>", self.scrolldown) # 下矢印キーがクリックされたら，scrolldown メソッドが呼ばれる．
-        self.window.bind("<Up>", self.scrollup)
+        self.url = None
+
+        # イベントハンドラのバインド処理
+        self.window.bind("<Down>", self.scrolldown) # <Down>: 下矢印キーのクリック
+        self.window.bind("<Up>", self.scrollup) # <Up>: 上矢印キーのクリック
+        self.window.bind("<Button-1>", self.click) # <Up>: マウスの左ボタンのクリック
 
     def draw(self):
         """
@@ -864,6 +868,7 @@ class Browser:
             cmd.execute(self.scroll, self.canvas)
 
     def load(self, url: URL):
+        self.url = url
         body = url.request()
         self.nodes = HTMLParser(body).parse()
 
@@ -918,6 +923,28 @@ class Browser:
         # 現在のスクロール位置から SCROLL_STEP を引き、0未満にはならないようにする
         self.scroll = max(self.scroll - SCROLL_STEP, 0)
         self.draw() # 再描画
+
+    def click(self, e: tkinter.Event):
+        x, y = e.x, e.y # クリックした位置
+        y += self.scroll
+
+        # note: ここで取得される obj は普通１つだが，負のマージンなどによって複数が含まれる場合があるので配列形式．
+        objs = [
+            obj
+            for obj in tree_to_list(self.document, [])
+                if obj.x <= x < obj.x + obj.width
+                    and obj.y <= y < obj.y + obj.height
+        ]
+        if not objs: return
+        elt = objs[-1].node # クリックされた要素の中で一番手前に描画されている（= 一番最後にパースされている）要素
+
+        while elt:
+            if isinstance(elt, Text):
+                pass
+            elif elt.tag == "a" and "href" in elt.attributes:
+                url = self.url.resolve(elt.attributes["href"])
+                return self.load(url)
+            elt = elt.parent
 
 if __name__ == "__main__":
     import sys
