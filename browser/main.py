@@ -841,7 +841,18 @@ SCROLL_STEP = 100
 """1回の画面スクロールで座標が移動する距離"""
 
 class Browser:
+    """
+    複数 Tab を束ねるブラウザ．
+
+    レンダリングがいつ行われるか，どのタブを描画するかは Browser が決定する．
+
+    Browser は Active，Tab は Passive という関係性で，
+    全てのユーザーインタラクションは Browser から始まり，Browser は必要に応じて Tab を呼び出す．
+    """
     def __init__(self):
+        self.tabs: list[Tab] = []
+        self.active_tab: Tab = None # 現在アクティブなタブ
+
         self.window = tkinter.Tk()
         self.canvas = tkinter.Canvas(
             self.window,
@@ -850,16 +861,47 @@ class Browser:
             bg="white"
         )
         self.canvas.pack()
+
+        # イベントハンドラのバインド処理
+        self.window.bind("<Down>", self.handle_down) # <Down>: 下矢印キーのクリック
+        self.window.bind("<Up>", self.handle_up) # <Up>: 上矢印キーのクリック
+        self.window.bind("<Button-1>", self.handle_click) # <Up>: マウスの左ボタンのクリック
+
+    def handle_down(self, e):
+        self.active_tab.scrolldown()
+        self.draw()
+
+    def handle_up(self, e):
+        self.active_tab.scrollup()
+        self.draw()
+
+    def handle_click(self, e: tkinter.Event):
+        self.active_tab.click(e.x, e.y)
+        self.draw()
+
+    def draw(self):
+        # 再描画時のためにまずキャンバスをクリア（画面のクリアはブラウザの仕事なのでここで実行される）．
+        self.canvas.delete("all")
+        self.active_tab.draw(self.canvas)
+
+    def new_tab(self, url: URL):
+        new_tab = Tab()
+        new_tab.load(url)
+        self.active_tab = new_tab
+        self.tabs.append(new_tab)
+        self.draw()
+
+class Tab:
+    """
+    Browser の Tab １つ分を表す．
+    Browser は複数の Tab を持つという関係．
+    """
+    def __init__(self):
         self.scroll = 0
         """画面座標(y)の一番上がページ座標(y)のどこに位置するのかを表すオフセット値"""
         self.url = None
 
-        # イベントハンドラのバインド処理
-        self.window.bind("<Down>", self.scrolldown) # <Down>: 下矢印キーのクリック
-        self.window.bind("<Up>", self.scrollup) # <Up>: 上矢印キーのクリック
-        self.window.bind("<Button-1>", self.click) # <Up>: マウスの左ボタンのクリック
-
-    def draw(self):
+    def draw(self, canvas: tkinter.Canvas):
         """
         描画対象（テキストや背景など）の画面座標を決定し，画面（キャンバス）に描画する．
 
@@ -868,14 +910,14 @@ class Browser:
 
         e.g. ページ座標(y) 123 ピクセルの位置のテキストが 30 ピクセル下にスクロールされた場合の画面座標(y)は 93 ピクセル．
         """
-        self.canvas.delete("all") # 再描画時のためにまずキャンバスをクリア．
         for cmd in self.display_list:
             if cmd.top > self.scroll + HEIGHT: continue # 画面下部より下の文字
             if cmd.bottom < self.scroll: continue # 画面上部より上の文字
 
-            cmd.execute(self.scroll, self.canvas)
+            cmd.execute(self.scroll, canvas)
 
     def load(self, url: URL):
+        self.scroll = 0
         self.url = url
         body = url.request()
         self.nodes = HTMLParser(body).parse()
@@ -908,9 +950,8 @@ class Browser:
         self.display_list: list[Union[DrawText, DrawRect]] = []
         """ページ座標やフォント情報を保持するリスト"""
         paint_tree(self.document, self.display_list)
-        self.draw()
 
-    def scrolldown(self, e):
+    def scrolldown(self):
         """
         note:
             最下部を過ぎてスクロールはできない．
@@ -921,19 +962,21 @@ class Browser:
         # => self.scroll == self.document.height + 2*VSTEP - HEIGHT
         max_y = max(self.document.height + 2*VSTEP - HEIGHT, 0)
         self.scroll = min(self.scroll + SCROLL_STEP, max_y) # self.scroll + SCROLL_STEP => 次のスクロール位置
-        self.draw() # 再描画
 
-    def scrollup(self, e):
+    def scrollup(self):
         """
         note:
             最上部を過ぎて（マイナス方向へ）スクロールはできない．
         """
         # 現在のスクロール位置から SCROLL_STEP を引き、0未満にはならないようにする
         self.scroll = max(self.scroll - SCROLL_STEP, 0)
-        self.draw() # 再描画
 
-    def click(self, e: tkinter.Event):
-        x, y = e.x, e.y # クリックした位置
+    def click(self, x, y):
+        """
+        parameter:
+            x: クリックした位置の x 座標
+            y: クリックした位置の y 座標
+        """
         y += self.scroll
 
         # note: ここで取得される obj は普通１つだが，負のマージンなどによって複数が含まれる場合があるので配列形式．
@@ -956,5 +999,5 @@ class Browser:
 
 if __name__ == "__main__":
     import sys
-    Browser().load(URL(sys.argv[1]))
+    Browser().new_tab(URL(sys.argv[1]))
     tkinter.mainloop()
