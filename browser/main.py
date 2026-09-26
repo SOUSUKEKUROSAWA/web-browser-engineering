@@ -8,6 +8,7 @@ HTMLNode = Union['Element', 'Text']
 LayoutNode = Union['DocumentLayout', 'BlockLayout', 'LineLayout', 'TextLayout']
 TreeNode = Union[HTMLNode, LayoutNode]
 Selector = Union['TagSelector', 'DescendantSelector']
+Draw = Union['DrawText', 'DrawRect', 'DrawOutline', 'DrawLine']
 
 class URL:
     def __init__(self, url: str):
@@ -687,6 +688,17 @@ class BlockLayout:
         # x カーソルを次の単語まで移動
         self.cursor_x += w + font.measure(" ")
 
+    def self_rect(self):
+        """
+        自分自身の矩形情報を返す．
+        """
+        return Rect(
+            self.x,
+            self.y,
+            self.x + self.width,
+            self.y + self.height
+        )
+
     def paint(self):
         """
         レイアウトオブジェクトからディスプレイリストに格納する描画命令を構築する．
@@ -696,15 +708,13 @@ class BlockLayout:
         # コード例に使用される pre タグの背景をグレーにする．
         # warning: テキストは背景の上に描画される必要があるので，DrawText より DrawRect が前に来る必要がある．
         if isinstance(self.node, Element) and self.node.tag == "pre":
-            x2, y2 = self.x + self.width, self.y + self.height
-            rect = DrawRect(self.x, self.y, x2, y2, "gray")
+            rect = DrawRect(self.self_rect(), "gray")
             cmds.append(rect)
 
         bgcolor = self.node.style.get("background-color", "transparent")
 
         if bgcolor != "transparent":
-            x2, y2 = self.x + self.width, self.y + self.height
-            rect = DrawRect(self.x, self.y, x2, y2, bgcolor)
+            rect = DrawRect(self.self_rect(), bgcolor)
             cmds.append(rect)
 
         return cmds
@@ -781,13 +791,10 @@ class DrawText:
     """
     テキストを描画するためのコマンド
     """
-
     def __init__(self, x1, y1, text, font: tkinter.font.Font, color):
-        self.top = y1
-        self.left = x1
         self.text = text
         self.font = font
-        self.bottom = y1 + font.metrics("linespace")
+        self.rect = Rect(x1, y1, x1 + font.measure(text), y1 + font.metrics("linespace"))
         self.color = color
 
     def execute(self, scroll, canvas: tkinter.Canvas):
@@ -796,8 +803,8 @@ class DrawText:
             scroll: スクロール量
         """
         canvas.create_text(
-            self.left,
-            self.top - scroll,
+            self.rect.left,
+            self.rect.top - scroll,
             text=self.text,
             font=self.font,
             anchor='nw',
@@ -808,11 +815,8 @@ class DrawRect:
     """
     背景を描画するためのコマンド
     """
-    def __init__(self, x1, y1, x2, y2, color):
-        self.top = y1
-        self.left = x1
-        self.bottom = y2
-        self.right = x2
+    def __init__(self, rect: 'Rect', color):
+        self.rect = rect
         self.color = color
 
     def execute(self, scroll, canvas: tkinter.Canvas):
@@ -821,12 +825,50 @@ class DrawRect:
             scroll: スクロール量
         """
         canvas.create_rectangle(
-            self.left,
-            self.top - scroll,
-            self.right,
-            self.bottom - scroll,
+            self.rect.left,
+            self.rect.top - scroll,
+            self.rect.right,
+            self.rect.bottom - scroll,
             width=0, # 境界線不要なので 0
             fill=self.color
+        )
+
+class DrawOutline:
+    """
+    矩形の境界線を描画するためのコマンド
+    """
+    def __init__(self, rect: 'Rect', color, thickness):
+        self.rect = rect
+        self.color = color
+        self.thickness = thickness
+
+    def execute(self, scroll, canvas: tkinter.Canvas):
+        canvas.create_rectangle(
+            self.rect.left,
+            self.rect.top - scroll,
+            self.rect.right,
+            self.rect.bottom - scroll,
+            width=self.thickness,
+            outline=self.color
+        )
+
+class DrawLine:
+    """
+    指定された色と太さの線を描画するためのコマンド
+    """
+    def __init__(self, x1, y1, x2, y2, color, thickness):
+        self.rect = Rect(x1, y1, x2, y2)
+        self.color = color
+        self.thickness = thickness
+
+    def execute(self, scroll, canvas: tkinter.Canvas):
+        canvas.create_line(
+            self.rect.left,
+            self.rect.top - scroll,
+            self.rect.right,
+            self.rect.bottom - scroll,
+            fill=self.color,
+            width=self.thickness
         )
 
 def paint_tree(layout_object: LayoutNode, display_list: list):
@@ -867,6 +909,8 @@ class Browser:
         self.window.bind("<Up>", self.handle_up) # <Up>: 上矢印キーのクリック
         self.window.bind("<Button-1>", self.handle_click) # <Up>: マウスの左ボタンのクリック
 
+        self.chrome = Chrome(self)
+
     def handle_down(self, e):
         self.active_tab.scrolldown()
         self.draw()
@@ -876,16 +920,23 @@ class Browser:
         self.draw()
 
     def handle_click(self, e: tkinter.Event):
-        self.active_tab.click(e.x, e.y)
+        if e.y < self.chrome.bottom:
+            self.chrome.click(e.x, e.y)
+        else:
+            tab_y = e.y - self.chrome.bottom
+            self.active_tab.click(e.x, tab_y)
         self.draw()
 
     def draw(self):
         # 再描画時のためにまずキャンバスをクリア（画面のクリアはブラウザの仕事なのでここで実行される）．
         self.canvas.delete("all")
-        self.active_tab.draw(self.canvas)
+        self.active_tab.draw(self.canvas, self.chrome.bottom)
+
+        for cmd in self.chrome.paint():
+            cmd.execute(0, self.canvas)
 
     def new_tab(self, url: URL):
-        new_tab = Tab()
+        new_tab = Tab(HEIGHT - self.chrome.bottom)
         new_tab.load(url)
         self.active_tab = new_tab
         self.tabs.append(new_tab)
@@ -896,12 +947,14 @@ class Tab:
     Browser の Tab １つ分を表す．
     Browser は複数の Tab を持つという関係．
     """
-    def __init__(self):
+    def __init__(self, tab_height):
         self.scroll = 0
         """画面座標(y)の一番上がページ座標(y)のどこに位置するのかを表すオフセット値"""
         self.url = None
+        self.tab_height = tab_height
+        """タブの描画を開始する高さ（= キャンバス全体からクロームUIの高さを引いたもの）"""
 
-    def draw(self, canvas: tkinter.Canvas):
+    def draw(self, canvas: tkinter.Canvas, offset):
         """
         描画対象（テキストや背景など）の画面座標を決定し，画面（キャンバス）に描画する．
 
@@ -911,10 +964,10 @@ class Tab:
         e.g. ページ座標(y) 123 ピクセルの位置のテキストが 30 ピクセル下にスクロールされた場合の画面座標(y)は 93 ピクセル．
         """
         for cmd in self.display_list:
-            if cmd.top > self.scroll + HEIGHT: continue # 画面下部より下の文字
-            if cmd.bottom < self.scroll: continue # 画面上部より上の文字
+            if cmd.rect.top > self.scroll + self.tab_height: continue # 画面下部より下の文字
+            if cmd.rect.bottom < self.scroll: continue # 画面上部より上の文字
 
-            cmd.execute(self.scroll, canvas)
+            cmd.execute(self.scroll - offset, canvas)
 
     def load(self, url: URL):
         self.scroll = 0
@@ -958,9 +1011,9 @@ class Tab:
         """
         # 最下部までスクロールした状態とは，
         # 「画面の下端」=「ドキュメント全体の最下部」
-        # => self.scroll + HEIGHT == self.document.height + 2*VSTEP
-        # => self.scroll == self.document.height + 2*VSTEP - HEIGHT
-        max_y = max(self.document.height + 2*VSTEP - HEIGHT, 0)
+        # => self.scroll + self.tab_height == self.document.height + 2*VSTEP
+        # => self.scroll == self.document.height + 2*VSTEP - self.tab_height
+        max_y = max(self.document.height + 2*VSTEP - self.tab_height, 0)
         self.scroll = min(self.scroll + SCROLL_STEP, max_y) # self.scroll + SCROLL_STEP => 次のスクロール位置
 
     def scrollup(self):
@@ -996,6 +1049,143 @@ class Tab:
                 url = self.url.resolve(elt.attributes["href"])
                 return self.load(url)
             elt = elt.parent
+
+class Chrome:
+    """
+    タブバーやアドレスバーなどのブラウザの UI パーツ
+
+    最終的なイメージ：
+    _____________
+    | + | Tab 0 | Tab 1 | ... | Tab N | ← タブバー
+    |___|       |_______|_____|_______|
+    | <   https://example.com         | ← アドレスバー
+    |_________________________________|
+    | ...                             | ← Web ページ
+    """
+    def __init__(self, browser: Browser):
+        self.browser = browser
+        self.font = get_font(20, "normal", "roman")
+        self.font_height = self.font.metrics("linespace")
+        self.padding = 5
+        self.tabbar_top = 0
+        """タブバーの上端の y 座標"""
+        self.tabbar_bottom = self.font_height + 2*self.padding
+        """タブバーの下端の y 座標"""
+        plus_width = self.font.measure("+") + 2*self.padding
+        """新しいタブを追加するための「＋」ボタンの幅"""
+        self.newtab_rect = Rect(
+            self.padding,
+            self.padding,
+            self.padding + plus_width,
+            self.padding + self.font_height
+        )
+        """新しいタブを追加するための「＋」ボタンの矩形情報"""
+        self.bottom = self.tabbar_bottom
+
+    def tab_rect(self, i) -> 'Rect':
+        """
+        parameter:
+            i: 何番目のタブか（インデックス）
+
+        return:
+            i 番目のタブの矩形情報
+        """
+        tabs_start = self.newtab_rect.right + self.padding # タブセクションの開始位置
+        tab_width = self.font.measure("Tab X") + 2*self.padding
+        return Rect(
+            tabs_start + tab_width * i,
+            self.tabbar_top,
+            tabs_start + tab_width * (i + 1),
+            self.tabbar_bottom
+        )
+
+    def paint(self) -> list[Draw]:
+        cmds = []
+
+        # ブラウザクロームの背景
+        cmds.append(DrawRect(
+            Rect(0, 0, WIDTH, self.bottom),
+            "white"
+        ))
+        # ブラウザクロームの下端の境界線（ページとの区切り）
+        cmds.append(DrawLine(
+            0,
+            self.bottom,
+            WIDTH,
+            self.bottom,
+            "black",
+            1
+        ))
+
+        # 新しいタブを追加するための「＋」ボタンの描画
+        cmds.append(DrawOutline(self.newtab_rect, "black", 1))
+        cmds.append(DrawText(
+            self.newtab_rect.left + self.padding,
+            self.newtab_rect.top,
+            "+",
+            self.font,
+            "black"
+        ))
+
+        # タブバーの描画
+        for i, tab in enumerate(self.browser.tabs):
+            bounds = self.tab_rect(i)
+            # 左の境界線
+            cmds.append(DrawLine(
+                bounds.left,
+                0,
+                bounds.left,
+                bounds.bottom,
+                "black",
+                1
+            ))
+            # 右の境界線
+            cmds.append(DrawLine(
+                bounds.right,
+                0,
+                bounds.right,
+                bounds.bottom,
+                "black",
+                1
+            ))
+            # タブ名の表示
+            cmds.append(DrawText(
+                bounds.left + self.padding,
+                bounds.top + self.padding,
+                "Tab {}".format(i),
+                self.font,
+                "black"
+            ))
+
+        return cmds
+
+    def click(self, x, y):
+        """
+        クリック操作によるアクティブタブの新規作成／切り替え
+        """
+        if self.newtab_rect.containsPoint(x, y):
+            self.browser.new_tab(URL("https://browser.engineering/"))
+        else:
+            for i, tab in enumerate(self.browser.tabs):
+                if self.tab_rect(i).containsPoint(x, y):
+                    self.browser.active_tab = tab
+                    break
+
+class Rect:
+    """
+    ブラウザクロームの様々な要素のサイズを表す矩形の情報を保持する．
+    """
+    def __init__(self, left, top, right, bottom):
+        self.left = left
+        self.top = top
+        self.right = right
+        self.bottom = bottom
+
+    def containsPoint(self, x, y):
+        """
+        所与の座標がこの矩形の中に含まれるかどうかを判定する．
+        """
+        return x >= self.left and x < self.right and y >= self.top and y < self.bottom
 
 if __name__ == "__main__":
     import sys
