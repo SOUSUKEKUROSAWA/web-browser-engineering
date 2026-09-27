@@ -544,6 +544,22 @@ HSTEP = 13
 VSTEP = 18
 """画面上の1文字の高さ"""
 
+class Rect:
+    """
+    ブラウザクロームの様々な要素のサイズを表す矩形の情報を保持する．
+    """
+    def __init__(self, left, top, right, bottom):
+        self.left = left
+        self.top = top
+        self.right = right
+        self.bottom = bottom
+
+    def containsPoint(self, x, y):
+        """
+        所与の座標がこの矩形の中に含まれるかどうかを判定する．
+        """
+        return x >= self.left and x < self.right and y >= self.top and y < self.bottom
+
 BLOCK_ELEMENTS = ["html", "body", "article", "section", "nav", "aside", "h1", "h2", "h3", "h4", "h5", "h6", "hgroup", "header", "footer", "address", "p", "hr", "pre", "blockquote", "ol", "ul", "menu", "li", "dl", "dt", "dd", "figure", "figcaption", "main", "div", "table", "form", "fieldset", "legend", "details", "summary"]
 
 class DocumentLayout:
@@ -841,25 +857,6 @@ class DrawRect:
             fill=self.color
         )
 
-class DrawOutline:
-    """
-    矩形の境界線を描画するためのコマンド
-    """
-    def __init__(self, rect: 'Rect', color, thickness):
-        self.rect = rect
-        self.color = color
-        self.thickness = thickness
-
-    def execute(self, scroll, canvas: tkinter.Canvas):
-        canvas.create_rectangle(
-            self.rect.left,
-            self.rect.top - scroll,
-            self.rect.right,
-            self.rect.bottom - scroll,
-            width=self.thickness,
-            outline=self.color
-        )
-
 class DrawLine:
     """
     指定された色と太さの線を描画するためのコマンド
@@ -879,6 +876,25 @@ class DrawLine:
             width=self.thickness
         )
 
+class DrawOutline:
+    """
+    矩形の境界線を描画するためのコマンド
+    """
+    def __init__(self, rect: 'Rect', color, thickness):
+        self.rect = rect
+        self.color = color
+        self.thickness = thickness
+
+    def execute(self, scroll, canvas: tkinter.Canvas):
+        canvas.create_rectangle(
+            self.rect.left,
+            self.rect.top - scroll,
+            self.rect.right,
+            self.rect.bottom - scroll,
+            width=self.thickness,
+            outline=self.color
+        )
+
 def paint_tree(layout_object: LayoutNode, display_list: list):
     """
     レイアウトツリー全体のディスプレイリストを構築する．
@@ -889,79 +905,6 @@ def paint_tree(layout_object: LayoutNode, display_list: list):
 
 SCROLL_STEP = 100
 """1回の画面スクロールで座標が移動する距離"""
-
-class Browser:
-    """
-    複数 Tab を束ねるブラウザ．
-
-    レンダリングがいつ行われるか，どのタブを描画するかは Browser が決定する．
-
-    Browser は Active，Tab は Passive という関係性で，
-    全てのユーザーインタラクションは Browser から始まり，Browser は必要に応じて Tab を呼び出す．
-    """
-    def __init__(self):
-        self.tabs: list[Tab] = []
-        self.active_tab: Tab = None # 現在アクティブなタブ
-
-        self.window = tkinter.Tk()
-        self.canvas = tkinter.Canvas(
-            self.window,
-            width=WIDTH,
-            height=HEIGHT,
-            bg="white"
-        )
-        self.canvas.pack()
-
-        # イベントハンドラのバインド処理
-        self.window.bind("<Down>", self.handle_down) # <Down>: 下矢印キーのクリック
-        self.window.bind("<Up>", self.handle_up) # <Up>: 上矢印キーのクリック
-        self.window.bind("<Button-1>", self.handle_click) # <Up>: マウスの左ボタンのクリック
-        self.window.bind("<Key>", self.handle_key) # <Key>: キーボードのキー入力
-        self.window.bind("<Return>", self.handle_enter) # <Return>: Enter キーのクリック
-
-        self.chrome = Chrome(self)
-
-    def handle_down(self, e):
-        self.active_tab.scrolldown()
-        self.draw()
-
-    def handle_up(self, e):
-        self.active_tab.scrollup()
-        self.draw()
-
-    def handle_click(self, e: tkinter.Event):
-        if e.y < self.chrome.bottom:
-            self.chrome.click(e.x, e.y)
-        else:
-            tab_y = e.y - self.chrome.bottom
-            self.active_tab.click(e.x, tab_y)
-        self.draw()
-
-    def handle_key(self, e: tkinter.Event):
-        if len(e.char) == 0: return # 文字入力ではない場合は無視する．
-        if not (0x20 <= ord(e.char) <= 0x7E): return # ASCII 文字以外は無視する．
-
-        self.chrome.keypress(e.char)
-        self.draw()
-
-    def handle_enter(self, e: tkinter.Event):
-        self.chrome.enter()
-        self.draw()
-
-    def draw(self):
-        # 再描画時のためにまずキャンバスをクリア（画面のクリアはブラウザの仕事なのでここで実行される）．
-        self.canvas.delete("all")
-        self.active_tab.draw(self.canvas, self.chrome.bottom)
-
-        for cmd in self.chrome.paint():
-            cmd.execute(0, self.canvas)
-
-    def new_tab(self, url: URL):
-        new_tab = Tab(HEIGHT - self.chrome.bottom)
-        new_tab.load(url)
-        self.active_tab = new_tab
-        self.tabs.append(new_tab)
-        self.draw()
 
 class Tab:
     """
@@ -977,6 +920,42 @@ class Tab:
         self.history: list[URL] = []
         """訪れたページの履歴"""
 
+    def load(self, url: URL):
+            self.history.append(url)
+            self.scroll = 0
+            self.url = url
+            body = url.request()
+            self.nodes = HTMLParser(body).parse()
+
+            rules = DEFAULT_STYLE_SHEET.copy()
+
+            links = [
+                node.attributes["href"] for node in tree_to_list(self.nodes, [])
+                    if isinstance(node, Element)
+                        and node.tag == "link"
+                        and node.attributes.get("rel") == "stylesheet"
+                        and "href" in node.attributes
+            ]
+            for link in links:
+                style_url = url.resolve(link)
+                try:
+                    body = style_url.request()
+                except:
+                    # ダウンロードに失敗したスタイルシートは単に無視する．
+                    continue
+                rules.extend(CSSParser(body).parse())
+
+            style(
+                self.nodes,
+                sorted(rules, key=cascade_priority)
+            )
+
+            self.document = DocumentLayout(self.nodes)
+            self.document.layout()
+            self.display_list: list[Union[DrawText, DrawRect]] = []
+            """ページ座標やフォント情報を保持するリスト"""
+            paint_tree(self.document, self.display_list)
+
     def draw(self, canvas: tkinter.Canvas, offset):
         """
         描画対象（テキストや背景など）の画面座標を決定し，画面（キャンバス）に描画する．
@@ -991,42 +970,6 @@ class Tab:
             if cmd.rect.bottom < self.scroll: continue # 画面上部より上の文字
 
             cmd.execute(self.scroll - offset, canvas)
-
-    def load(self, url: URL):
-        self.history.append(url)
-        self.scroll = 0
-        self.url = url
-        body = url.request()
-        self.nodes = HTMLParser(body).parse()
-
-        rules = DEFAULT_STYLE_SHEET.copy()
-
-        links = [
-            node.attributes["href"] for node in tree_to_list(self.nodes, [])
-                if isinstance(node, Element)
-                    and node.tag == "link"
-                    and node.attributes.get("rel") == "stylesheet"
-                    and "href" in node.attributes
-        ]
-        for link in links:
-            style_url = url.resolve(link)
-            try:
-                body = style_url.request()
-            except:
-                # ダウンロードに失敗したスタイルシートは単に無視する．
-                continue
-            rules.extend(CSSParser(body).parse())
-
-        style(
-            self.nodes,
-            sorted(rules, key=cascade_priority)
-        )
-
-        self.document = DocumentLayout(self.nodes)
-        self.document.layout()
-        self.display_list: list[Union[DrawText, DrawRect]] = []
-        """ページ座標やフォント情報を保持するリスト"""
-        paint_tree(self.document, self.display_list)
 
     def scrolldown(self):
         """
@@ -1095,7 +1038,7 @@ class Chrome:
     |_________________________________|
     | ...                             | ← Web ページ
     """
-    def __init__(self, browser: Browser):
+    def __init__(self, browser: 'Browser'):
         self.browser = browser
         self.font = get_font(20, "normal", "roman")
         self.font_height = self.font.metrics("linespace")
@@ -1293,21 +1236,78 @@ class Chrome:
             self.browser.active_tab.load(URL(self.address_bar))
             self.focus = None
 
-class Rect:
+class Browser:
     """
-    ブラウザクロームの様々な要素のサイズを表す矩形の情報を保持する．
-    """
-    def __init__(self, left, top, right, bottom):
-        self.left = left
-        self.top = top
-        self.right = right
-        self.bottom = bottom
+    複数 Tab を束ねるブラウザ．
 
-    def containsPoint(self, x, y):
-        """
-        所与の座標がこの矩形の中に含まれるかどうかを判定する．
-        """
-        return x >= self.left and x < self.right and y >= self.top and y < self.bottom
+    レンダリングがいつ行われるか，どのタブを描画するかは Browser が決定する．
+
+    Browser は Active，Tab は Passive という関係性で，
+    全てのユーザーインタラクションは Browser から始まり，Browser は必要に応じて Tab を呼び出す．
+    """
+    def __init__(self):
+        self.tabs: list[Tab] = []
+        self.active_tab: Tab = None # 現在アクティブなタブ
+
+        self.window = tkinter.Tk()
+        self.canvas = tkinter.Canvas(
+            self.window,
+            width=WIDTH,
+            height=HEIGHT,
+            bg="white"
+        )
+        self.canvas.pack()
+
+        # イベントハンドラのバインド処理
+        self.window.bind("<Down>", self.handle_down) # <Down>: 下矢印キーのクリック
+        self.window.bind("<Up>", self.handle_up) # <Up>: 上矢印キーのクリック
+        self.window.bind("<Button-1>", self.handle_click) # <Up>: マウスの左ボタンのクリック
+        self.window.bind("<Key>", self.handle_key) # <Key>: キーボードのキー入力
+        self.window.bind("<Return>", self.handle_enter) # <Return>: Enter キーのクリック
+
+        self.chrome = Chrome(self)
+
+    def draw(self):
+        # 再描画時のためにまずキャンバスをクリア（画面のクリアはブラウザの仕事なのでここで実行される）．
+        self.canvas.delete("all")
+        self.active_tab.draw(self.canvas, self.chrome.bottom)
+
+        for cmd in self.chrome.paint():
+            cmd.execute(0, self.canvas)
+
+    def new_tab(self, url: URL):
+        new_tab = Tab(HEIGHT - self.chrome.bottom)
+        new_tab.load(url)
+        self.active_tab = new_tab
+        self.tabs.append(new_tab)
+        self.draw()
+
+    def handle_down(self, e):
+        self.active_tab.scrolldown()
+        self.draw()
+
+    def handle_up(self, e):
+        self.active_tab.scrollup()
+        self.draw()
+
+    def handle_click(self, e: tkinter.Event):
+        if e.y < self.chrome.bottom:
+            self.chrome.click(e.x, e.y)
+        else:
+            tab_y = e.y - self.chrome.bottom
+            self.active_tab.click(e.x, tab_y)
+        self.draw()
+
+    def handle_key(self, e: tkinter.Event):
+        if len(e.char) == 0: return # 文字入力ではない場合は無視する．
+        if not (0x20 <= ord(e.char) <= 0x7E): return # ASCII 文字以外は無視する．
+
+        self.chrome.keypress(e.char)
+        self.draw()
+
+    def handle_enter(self, e: tkinter.Event):
+        self.chrome.enter()
+        self.draw()
 
 if __name__ == "__main__":
     import sys
