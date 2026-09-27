@@ -916,6 +916,8 @@ class Browser:
         self.window.bind("<Down>", self.handle_down) # <Down>: 下矢印キーのクリック
         self.window.bind("<Up>", self.handle_up) # <Up>: 上矢印キーのクリック
         self.window.bind("<Button-1>", self.handle_click) # <Up>: マウスの左ボタンのクリック
+        self.window.bind("<Key>", self.handle_key) # <Key>: キーボードのキー入力
+        self.window.bind("<Return>", self.handle_enter) # <Return>: Enter キーのクリック
 
         self.chrome = Chrome(self)
 
@@ -933,6 +935,17 @@ class Browser:
         else:
             tab_y = e.y - self.chrome.bottom
             self.active_tab.click(e.x, tab_y)
+        self.draw()
+
+    def handle_key(self, e: tkinter.Event):
+        if len(e.char) == 0: return # 文字入力ではない場合は無視する．
+        if not (0x20 <= ord(e.char) <= 0x7E): return # ASCII 文字以外は無視する．
+
+        self.chrome.keypress(e.char)
+        self.draw()
+
+    def handle_enter(self, e: tkinter.Event):
+        self.chrome.enter()
         self.draw()
 
     def draw(self):
@@ -1119,8 +1132,17 @@ class Chrome:
             self.urlbar_bottom - self.padding
         )
         """アドレスバーの矩形情報"""
-
         self.bottom = self.urlbar_bottom
+        """ブラウザクローム全体の下端の y 座標"""
+        self.focus = None
+        """現在フォーカスされている UI パーツ"""
+        self.address_bar = ""
+        """
+        現在アドレスバーに入力されている文字列
+
+        warning: アドレスバーはユーザーが任意のタイミングで編集する可能性があり，
+                 表示中の画面のURLとは必ずしも一致しないため，タブのURLオブジェクトとは別で管理する．
+        """
 
     def tab_rect(self, i) -> 'Rect':
         """
@@ -1209,14 +1231,34 @@ class Chrome:
 
         # アドレスバーの描画
         cmds.append(DrawOutline(self.address_rect, "black", 1))
-        url = str(self.browser.active_tab.url)
-        cmds.append(DrawText(
-            self.address_rect.left + self.padding,
-            self.address_rect.top,
-            url,
-            self.font,
-            "black"
-        ))
+        if self.focus == "address bar":
+            # アドレスバーにフォーカスがある場合は，ユーザーが入力中の文字列を表示する．
+            cmds.append(DrawText(
+                self.address_rect.left + self.padding,
+                self.address_rect.top,
+                self.address_bar,
+                self.font,
+                "black"
+            ))
+            # 入力カーソル
+            w = self.font.measure(self.address_bar)
+            cmds.append(DrawLine(
+                self.address_rect.left + self.padding + w,
+                self.address_rect.top,
+                self.address_rect.left + self.padding + w,
+                self.address_rect.bottom,
+                "red",
+                1
+            ))
+        else:
+            url = str(self.browser.active_tab.url)
+            cmds.append(DrawText(
+                self.address_rect.left + self.padding,
+                self.address_rect.top,
+                url,
+                self.font,
+                "black"
+            ))
 
         return cmds
 
@@ -1227,15 +1269,29 @@ class Chrome:
         e.g. 「＋」ボタン → 新しいタブを追加
              「＜」ボタン → 前のページに戻る
         """
+        self.focus = None
+
         if self.newtab_rect.containsPoint(x, y):
             self.browser.new_tab(URL("https://browser.engineering/"))
         elif self.back_rect.containsPoint(x, y):
             self.browser.active_tab.go_back()
+        elif self.address_rect.containsPoint(x, y):
+            self.focus = "address bar"
+            self.address_bar = ""
         else:
             for i, tab in enumerate(self.browser.tabs):
                 if self.tab_rect(i).containsPoint(x, y):
                     self.browser.active_tab = tab
                     break
+
+    def keypress(self, char):
+        if self.focus == "address bar":
+            self.address_bar += char
+
+    def enter(self):
+        if self.focus == "address bar":
+            self.browser.active_tab.load(URL(self.address_bar))
+            self.focus = None
 
 class Rect:
     """
