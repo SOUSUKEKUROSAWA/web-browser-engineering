@@ -97,6 +97,14 @@ class URL:
         else:
             return URL(self.scheme + "://" + self.host + ":" + str(self.port) + url)
 
+    def __str__(self):
+        port_part = ":" + str(self.port)
+        if self.scheme == "https" and self.port == 443:
+            port_part = ""
+        if self.scheme == "http" and self.port == 80:
+            port_part = ""
+        return self.scheme + "://" + self.host + port_part + self.path
+
 class Text:
     def __init__(self, text, parent):
         self.text: str = text
@@ -953,6 +961,8 @@ class Tab:
         self.url = None
         self.tab_height = tab_height
         """タブの描画を開始する高さ（= キャンバス全体からクロームUIの高さを引いたもの）"""
+        self.history: list[URL] = []
+        """訪れたページの履歴"""
 
     def draw(self, canvas: tkinter.Canvas, offset):
         """
@@ -970,6 +980,7 @@ class Tab:
             cmd.execute(self.scroll - offset, canvas)
 
     def load(self, url: URL):
+        self.history.append(url)
         self.scroll = 0
         self.url = url
         body = url.request()
@@ -1050,6 +1061,15 @@ class Tab:
                 return self.load(url)
             elt = elt.parent
 
+    def go_back(self):
+        """
+        1つ前のページに戻る
+        """
+        if len(self.history) > 1:
+            self.history.pop() # 現在のページを履歴から削除
+            back = self.history.pop() # 1つ前のページを取得
+            self.load(back)
+
 class Chrome:
     """
     タブバーやアドレスバーなどのブラウザの UI パーツ
@@ -1080,7 +1100,27 @@ class Chrome:
             self.padding + self.font_height
         )
         """新しいタブを追加するための「＋」ボタンの矩形情報"""
-        self.bottom = self.tabbar_bottom
+        self.urlbar_top = self.tabbar_bottom
+        """アドレスバーの上端の y 座標"""
+        self.urlbar_bottom = self.urlbar_top + self.font_height + 2*self.padding
+        """アドレスバーの下端の y 座標"""
+        back_width = self.font.measure("<") + 2*self.padding
+        self.back_rect = Rect(
+            self.padding,
+            self.urlbar_top + self.padding,
+            self.padding + back_width,
+            self.urlbar_bottom - self.padding
+        )
+        """戻るボタンの矩形情報"""
+        self.address_rect = Rect(
+            self.back_rect.top + self.padding,
+            self.urlbar_top + self.padding,
+            WIDTH - self.padding,
+            self.urlbar_bottom - self.padding
+        )
+        """アドレスバーの矩形情報"""
+
+        self.bottom = self.urlbar_bottom
 
     def tab_rect(self, i) -> 'Rect':
         """
@@ -1157,14 +1197,40 @@ class Chrome:
                 "black"
             ))
 
+        # 戻るボタン「＜」の描画
+        cmds.append(DrawOutline(self.back_rect, "black", 1))
+        cmds.append(DrawText(
+            self.back_rect.left + self.padding,
+            self.back_rect.top,
+            "<",
+            self.font,
+            "black"
+        ))
+
+        # アドレスバーの描画
+        cmds.append(DrawOutline(self.address_rect, "black", 1))
+        url = str(self.browser.active_tab.url)
+        cmds.append(DrawText(
+            self.address_rect.left + self.padding,
+            self.address_rect.top,
+            url,
+            self.font,
+            "black"
+        ))
+
         return cmds
 
     def click(self, x, y):
         """
-        クリック操作によるアクティブタブの新規作成／切り替え
+        クリックされた位置がどの UI パーツに含まれるかを判定し，それぞれのアクションを実行する．
+
+        e.g. 「＋」ボタン → 新しいタブを追加
+             「＜」ボタン → 前のページに戻る
         """
         if self.newtab_rect.containsPoint(x, y):
             self.browser.new_tab(URL("https://browser.engineering/"))
+        elif self.back_rect.containsPoint(x, y):
+            self.browser.active_tab.go_back()
         else:
             for i, tab in enumerate(self.browser.tabs):
                 if self.tab_rect(i).containsPoint(x, y):
